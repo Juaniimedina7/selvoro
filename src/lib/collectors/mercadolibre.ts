@@ -1,0 +1,158 @@
+import type { CollectorResult, MercadoLibreData, Signal } from "@/lib/types";
+
+// Collector de Mercado Libre. Ancla local del MVP (precio, competencia, listings).
+// Usa la API oficial. Si ML exige autenticación y no hay token, degrada con gracia
+// en vez de romper el pipeline (ver plan §8 y §13: "sin datos" != "sin competencia").
+
+const ML_API = "https://api.mercadolibre.com";
+
+interface MlSearchResponse {
+  paging?: { total?: number };
+  results?: Array<{
+    title?: string;
+    price?: number;
+    currency_id?: string;
+    sold_quantity?: number;
+    seller?: { nickname?: string };
+  }>;
+}
+
+function median(nums: number[]): number | null {
+  if (nums.length === 0) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+export async function collectMercadoLibre(query: string): Promise<CollectorResult> {
+  const site = process.env.ML_SITE_ID || "MLA";
+  const token = process.env.ML_ACCESS_TOKEN?.trim();
+  const url = `${ML_API}/sites/${site}/search?q=${encodeURIComponent(query)}&limit=50`;
+
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const source = "Mercado Libre API";
+
+  const degraded = (note: string, error?: string): CollectorResult => {
+    const data: MercadoLibreData = {
+      available: false,
+      totalListings: null,
+      priceMin: null,
+      priceMax: null,
+      priceMedian: null,
+      currency: null,
+      topSellers: [],
+      sampleTitles: [],
+      note,
+    };
+    const signals: Signal[] = [
+      {
+        key: "ml_status",
+        label: "Cobertura Mercado Libre",
+        value: "no disponible",
+        source,
+        confidence: "baja",
+        unavailable: true,
+      },
+    ];
+    return { source, signals, raw: { mercadoLibre: data }, error };
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  } catch (e) {
+    return degraded(
+      "No se pudo contactar la API de Mercado Libre (timeout o red).",
+      String(e),
+    );
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    return degraded(
+      "La API de Mercado Libre requiere autenticación. Registrá una app y completá ML_ACCESS_TOKEN para habilitar precio y competencia local.",
+      `HTTP ${res.status}`,
+    );
+  }
+  if (!res.ok) {
+    return degraded(`Mercado Libre respondió HTTP ${res.status}.`, `HTTP ${res.status}`);
+  }
+
+  let json: MlSearchResponse;
+  try {
+    json = (await res.json()) as MlSearchResponse;
+  } catch (e) {
+    return degraded("Respuesta de Mercado Libre no parseable.", String(e));
+  }
+
+  const results = json.results ?? [];
+  const prices = results
+    .map((r) => r.price)
+    .filter((p): p is number => typeof p === "number" && p > 0);
+
+  const currency = results.find((r) => r.currency_id)?.currency_id ?? null;
+  const totalListings = json.paging?.total ?? results.length;
+
+  const topSellers = results
+    .filter((r) => r.seller?.nickname)
+    .slice(0, 5)
+    .map((r) => ({
+      nickname: r.seller!.nickname!,
+      soldSignal:
+        typeof r.sold_quantity === "number" ? `${r.sold_quantity}+ ventas (proxy)` : null,
+    }));
+
+  const data: MercadoLibreData = {
+    available: true,
+    totalListings,
+    priceMin: prices.length ? Math.min(...prices) : null,
+    priceMax: prices.length ? Math.max(...prices) : null,
+    priceMedian: median(prices),
+    currency,
+    topSellers,
+    sampleTitles: results
+      .map((r) => r.title)
+      .filter((t): t is string => !!t)
+      .slice(0, 8),
+  };
+
+  const conf = totalListings != null && totalListings > 0 ? "media" : "baja";
+  const signals: Signal[] = [
+    {
+      key: "ml_listings",
+      label: "Publicaciones en Mercado Libre AR",
+      value: totalListings,
+      source,
+      confidence: conf,
+    },
+    {
+      key: "ml_price_median",
+      label: `Precio mediano (${currency ?? "moneda local"})`,
+      value: data.priceMedian,
+      source,
+      confidence: prices.length ? "media" : "baja",
+    },
+    {
+      key: "ml_price_range",
+      label: "Rango de precios",
+      value:
+        data.priceMin != null && data.priceMax != null
+          ? `${data.priceMin} - ${data.priceMax}`
+          : null,
+      source,
+      confidence: prices.length ? "media" : "baja",
+    },
+    {
+      key: "ml_competitors",
+      label: "Vendedores locales visibles (muestra)",
+      value: topSellers.length,
+      source,
+      confidence: "baja",
+    },
+  ];
+
+  return { source, signals, raw: { mercadoLibre: data } };
+}
