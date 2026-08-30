@@ -21,8 +21,11 @@ export interface MarketComparison {
   note: string;
 }
 
-export async function compareMarkets(input: AnalyzeInput): Promise<MarketComparison> {
-  const evidence = await gatherEvidence(input);
+export async function compareMarkets(
+  input: AnalyzeInput,
+  opts?: { clerkUserId?: string },
+): Promise<MarketComparison> {
+  const evidence = await gatherEvidence(input, opts);
 
   return {
     query: input.query,

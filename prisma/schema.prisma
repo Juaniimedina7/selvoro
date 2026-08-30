@@ -90,6 +90,25 @@ model Report {
   @@index([clerkUserId, createdAt])
 }
 
+/**
+ * Credenciales de integraciones de datos cargadas por el usuario (BYOK) —
+ * NUNCA las de IA (ANTHROPIC_API_KEY sigue siendo server-side) ni ML_ACCESS_TOKEN
+ * (excluido a propósito, sigue compartido). `provider` es String libre (no
+ * enum) para que sumar una integración nueva sea una entrada de código, sin
+ * migración de schema. `encryptedValue` es un JSON cifrado (AES-256-GCM) con
+ * forma libre por provider (hoy meta_ads: {"accessToken": "..."}).
+ */
+model UserCredential {
+  id             String   @id @default(cuid())
+  clerkUserId    String
+  provider       String
+  encryptedValue String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([clerkUserId, provider])
+}
+
 enum WebhookStatus {
   RECEIVED
   PROCESSED

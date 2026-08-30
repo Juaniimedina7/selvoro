@@ -52,6 +52,7 @@ export interface SearchProductsResult {
 export async function searchProducts(params: {
   criteria: string;
   maxCandidates?: number;
+  clerkUserId?: string;
 }): Promise<SearchProductsResult> {
   const maxCandidates = Math.min(
     Math.max(1, params.maxCandidates ?? DEFAULT_MAX_CANDIDATES),
@@ -67,7 +68,9 @@ export async function searchProducts(params: {
   const candidateQueries = brainstorm.candidatos.slice(0, maxCandidates);
 
   const evidences = await Promise.all(
-    candidateQueries.map((query) => gatherEvidence({ query, market: "AR" })),
+    candidateQueries.map((query) =>
+      gatherEvidence({ query, market: "AR" }, { clerkUserId: params.clerkUserId }),
+    ),
   );
 
   const results: SearchProductsCandidate[] = candidateQueries

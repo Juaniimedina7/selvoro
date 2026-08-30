@@ -67,8 +67,11 @@ const analyzeProduct: ToolDef<z.infer<typeof analyzeProductSchema>> = {
   description:
     "Junta evidencia real (Mercado Libre, Google Trends, Meta Ad Library) y un scoring explicable de 9 dimensiones para un producto o una tienda/competidor puntual. Devuelve evidencia CRUDA (señales + score + su explicación determinista por dimensión), no una narrativa redactada — sintetizá vos la lectura para el usuario a partir de esto.",
   schema: analyzeProductSchema,
-  handler: async (_ctx, input) => {
-    const evidence = await gatherEvidence({ query: input.query, market: "AR", ticketUsd: input.ticketUsd });
+  handler: async (ctx, input) => {
+    const evidence = await gatherEvidence(
+      { query: input.query, market: "AR", ticketUsd: input.ticketUsd },
+      { clerkUserId: ctx.clerkUserId },
+    );
     return summarizeEvidence(evidence);
   },
 };
@@ -105,9 +108,10 @@ const listSourcesSchema = z.object({});
 const listSourcesTool: ToolDef<z.infer<typeof listSourcesSchema>> = {
   name: "list_sources",
   title: "Fuentes de datos",
-  description: "Indica qué fuentes de datos están activas, degradadas o no disponibles (Mercado Libre, Google Trends, Meta Ad Library, TikTok).",
+  description:
+    "Indica qué fuentes de datos están activas, degradadas o no disponibles (Mercado Libre, Google Trends, Meta Ad Library, TikTok). Mercado Libre/Trends reflejan la configuración del servidor; Meta Ad Library refleja SI ESTE USUARIO cargó su propio token en Configuración → Integraciones (cada usuario tiene su propio estado ahí).",
   schema: listSourcesSchema,
-  handler: async () => getSourceStatuses(),
+  handler: async (ctx) => getSourceStatuses(ctx.clerkUserId),
 };
 
 const compareMarketsSchema = z.object({
@@ -120,7 +124,8 @@ const compareMarketsTool: ToolDef<z.infer<typeof compareMarketsSchema>> = {
   description:
     "Compara tendencia de búsqueda y anuncios activos de Meta entre Argentina y Estados Unidos para un producto. Solo soporta AR vs US (los collectors no soportan otros pares de mercado todavía). Evidencia cruda, sin narrativa propia.",
   schema: compareMarketsSchema,
-  handler: async (_ctx, input) => compareMarkets({ query: input.query, market: "AR" }),
+  handler: async (ctx, input) =>
+    compareMarkets({ query: input.query, market: "AR" }, { clerkUserId: ctx.clerkUserId }),
 };
 
 const generateTestBriefSchema = z.object({
@@ -162,10 +167,11 @@ const searchProductsTool: ToolDef<z.infer<typeof searchProductsSchema>> = {
   description:
     `Descubre hasta ${HARD_MAX_CANDIDATES} productos candidatos a partir de un criterio en lenguaje libre: un paso de IA brainstormea ideas concretas y CADA UNA pasa por collectors+scoring reales (sin narrativa por candidato). Son ideas generadas por IA y validadas con señales reales, NO un catálogo real de productos ganadores. Dispara 1 llamada de brainstorm + N corridas de collectors — úsalo con criterio.`,
   schema: searchProductsSchema,
-  handler: async (_ctx, input) => {
+  handler: async (ctx, input) => {
     const { results, note, criteria } = await searchProducts({
       criteria: input.criteria,
       maxCandidates: input.maxCandidates,
+      clerkUserId: ctx.clerkUserId,
     });
     return {
       criteria,

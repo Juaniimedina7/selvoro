@@ -41,6 +41,9 @@ export function Header() {
             <Link href="/dashboard/chat" style={{ color: "var(--muted)", textDecoration: "none" }}>
               Chat
             </Link>
+            <Link href="/dashboard/settings" style={{ color: "var(--muted)", textDecoration: "none" }}>
+              Integraciones
+            </Link>
             <Link href="/dashboard" style={{ color: "var(--muted)", textDecoration: "none" }}>
               Mi cuenta
             </Link>

@@ -91,12 +91,13 @@ async function fetchMarket(
   country: "AR" | "US",
   token: string,
   version: string,
+  limit = 100,
 ): Promise<FetchOutcome> {
   const url =
     `https://graph.facebook.com/${version}/ads_archive` +
     `?search_terms=${encodeURIComponent(query)}` +
     `&ad_reached_countries=${encodeURIComponent(JSON.stringify([country]))}` +
-    `&ad_active_status=ACTIVE&ad_type=ALL&limit=100` +
+    `&ad_active_status=ACTIVE&ad_type=ALL&limit=${limit}` +
     `&fields=${ADS_FIELDS}` +
     `&access_token=${encodeURIComponent(token)}`;
 
@@ -144,9 +145,38 @@ async function fetchMarket(
   return { ok: true, market: summarizeMarket(json.data ?? []) };
 }
 
-export async function collectMetaAds(query: string): Promise<CollectorResult> {
+/** Traduce el motivo de fallo de la Graph API a un mensaje humano y accionable. */
+function describeFailure(failure: Extract<FetchOutcome, { ok: false }>): string {
+  switch (failure.kind) {
+    case "auth":
+      return "El token de Meta Ad Library expiró o es inválido. Regenerá tu access token.";
+    case "permissions":
+      return "El token no tiene el permiso ads_read aprobado, o la app no completó App Review / verificación de negocio para Ads Library API.";
+    case "rate_limit":
+      return "Se alcanzó el límite de tasa de la Graph API de Meta. No se reintenta automáticamente; probá de nuevo en unos minutos.";
+    case "network":
+      return "No se pudo contactar la Ad Library API de Meta (timeout o red).";
+    default:
+      return "La consulta a Meta Ad Library fue rechazada (parámetros inválidos).";
+  }
+}
+
+/** Valida un access token de Meta Ad Library con una consulta liviana (limit=1). Usado al guardar el credential en /dashboard/settings. */
+export async function verifyMetaAdsAccessToken(token: string): Promise<{ ok: boolean; message: string }> {
+  const version = process.env.META_GRAPH_API_VERSION?.trim() || DEFAULT_GRAPH_VERSION;
+  const result = await fetchMarket("producto", "AR", token, version, 1);
+  if (result.ok) return { ok: true, message: "Token válido." };
+  return { ok: false, message: describeFailure(result) };
+}
+
+/**
+ * Collector de Meta Ad Library. `accessToken` es el credential del usuario
+ * (BYOK, ver src/lib/credentials/) — sin token, degrada con gracia igual que
+ * cualquier otra fuente sin configurar.
+ */
+export async function collectMetaAds(query: string, accessToken?: string): Promise<CollectorResult> {
   const source = "Meta Ad Library API";
-  const token = process.env.META_ADS_ACCESS_TOKEN?.trim();
+  const token = accessToken?.trim();
   const version = process.env.META_GRAPH_API_VERSION?.trim() || DEFAULT_GRAPH_VERSION;
 
   const degraded = (note: string, error?: string): CollectorResult => {
@@ -172,9 +202,8 @@ export async function collectMetaAds(query: string): Promise<CollectorResult> {
 
   if (!token) {
     return degraded(
-      "Meta Ad Library requiere un access token con permiso ads_read. Configurá META_ADS_ACCESS_TOKEN " +
-        "(app en Meta for Developers + producto 'Ads Library API' + App Review + verificación de negocio). " +
-        "Ver .env.example.",
+      "Meta Ad Library requiere que cargues tu propio access token en Configuración → Integraciones " +
+        "(app en Meta for Developers + producto 'Ads Library API' + App Review + verificación de negocio).",
     );
   }
 
@@ -186,35 +215,7 @@ export async function collectMetaAds(query: string): Promise<CollectorResult> {
   if (!arResult.ok && !usResult.ok) {
     const failure = arResult.ok ? usResult : arResult;
     if (!failure.ok) {
-      switch (failure.kind) {
-        case "auth":
-          return degraded(
-            "El token de Meta Ad Library expiró o es inválido. Regenerá META_ADS_ACCESS_TOKEN.",
-            failure.message,
-          );
-        case "permissions":
-          return degraded(
-            "El token no tiene el permiso ads_read aprobado, o la app no completó App Review / " +
-              "verificación de negocio para Ads Library API.",
-            failure.message,
-          );
-        case "rate_limit":
-          return degraded(
-            "Se alcanzó el límite de tasa de la Graph API de Meta. No se reintenta automáticamente; " +
-              "probá de nuevo en unos minutos.",
-            failure.message,
-          );
-        case "network":
-          return degraded(
-            "No se pudo contactar la Ad Library API de Meta (timeout o red).",
-            failure.message,
-          );
-        default:
-          return degraded(
-            "La consulta a Meta Ad Library fue rechazada (parámetros inválidos).",
-            failure.message,
-          );
-      }
+      return degraded(describeFailure(failure), failure.message);
     }
   }
 

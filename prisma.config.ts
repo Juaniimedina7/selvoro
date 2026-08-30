@@ -14,6 +14,10 @@ export default defineConfig({
   },
   datasource: {
     url: env("DATABASE_URL"),
-    shadowDatabaseUrl: env("DIRECT_URL"),
+    // shadowDatabaseUrl es una DB vacía dedicada para que `migrate dev` pueda
+    // diffear migraciones sin tocar la real — NO es lo mismo que DIRECT_URL
+    // (esa es la misma DB de siempre, solo sin pooler). Con Neon: otra DB en
+    // el mismo proyecto (ver README, sección de setup de Prisma).
+    shadowDatabaseUrl: env("SHADOW_DATABASE_URL"),
   },
 });

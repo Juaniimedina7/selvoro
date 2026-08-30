@@ -890,3 +890,83 @@ el agente que llama ya puede escribir solo. Se refactorizó:
 
 `tsc --noEmit` y `npm run build` pasan limpio después de este ajuste (17
 rutas, sin cambios en la cuenta de rutas — solo lógica interna).
+
+---
+
+## Estado de implementación — credenciales de integraciones por usuario (BYOK)
+
+Pedido del usuario: que cada uno cargue sus propias credenciales de
+integraciones de DATOS desde la UI, **salvo** `ML_ACCESS_TOKEN` (excluido
+explícitamente, sigue server-side) y `ANTHROPIC_API_KEY` (es de IA, no de
+integraciones de datos — no se toca, el sistema de créditos sigue igual).
+Plan completo (mismo archivo, reescrito para esta ronda) en
+`~/.claude/plans/genera-un-plan-para-atomic-crystal.md`.
+
+### Qué se construyó
+
+- **`UserCredential`** (Prisma): tabla genérica `{clerkUserId, provider,
+  encryptedValue}` — `provider` es `String` libre a propósito (no enum), para
+  que sumar una integración nueva sea una entrada de código en
+  `src/lib/credentials/providers.ts`, no una migración de schema.
+  `encryptedValue` es un JSON cifrado con forma libre por provider.
+- **`src/lib/credentials/crypto.ts`**: AES-256-GCM nativo de Node (sin
+  dependencias nuevas), clave en `CREDENTIALS_ENCRYPTION_KEY`.
+- **`src/lib/credentials/store.ts`**: `setUserCredential` valida contra
+  `provider.verify()` (una consulta real a la API) **antes** de cifrar y
+  guardar — nunca persiste un token roto.
+- **`meta-ads.ts`**: `collectMetaAds(query, accessToken?)` ya no lee ningún
+  env var — el token llega como parámetro. Se agregó
+  `verifyMetaAdsAccessToken()` (consulta liviana, `limit=1`) reusada tanto
+  por `provider.verify()` como potencialmente por el collector.
+- **Threading del `clerkUserId`**: `gatherEvidence`/`runAnalysis`
+  (`pipeline.ts`), `compareMarkets`, `searchProducts` y `getSourceStatuses`
+  ganaron un parámetro `clerkUserId?`/`opts.clerkUserId` para resolver el
+  credential del usuario antes de llamar al collector. Se propaga desde
+  `/api/analyze/route.ts` (ya tenía `userId` de `auth()`) y desde
+  `agent/tools.ts` (ya tenía `ctx.clerkUserId`).
+- **UI**: `/dashboard/settings` (Server Component, lee `listUserCredentialStatus`
+  + metadata de `CREDENTIAL_PROVIDERS`) + `IntegrationsList`/`IntegrationCard`
+  (client, "Probar y guardar" llama al POST que valida antes de persistir).
+  `/api/settings/credentials` (GET/POST/DELETE) nunca devuelve el secreto
+  completo, solo `configured` + últimos 4 caracteres.
+
+### Problema real encontrado con Prisma + Neon (no anticipado en el plan)
+
+Al correr la migración nueva, `prisma migrate dev` tiró `P3005: database
+schema is not empty`. Causa raíz: en Fase B, `prisma.config.ts` tenía
+`shadowDatabaseUrl: env("DIRECT_URL")` — pero `DIRECT_URL` apunta a la MISMA
+`neondb` (solo sin pooler), no a una shadow DB vacía de verdad. Funcionó la
+primera vez de pura casualidad (la DB estaba vacía en ese momento). El
+`Datasource` type de `@prisma/config` (Prisma 7) solo tiene `url` y
+`shadowDatabaseUrl` — no existe un concepto separado de `directUrl` en
+`prisma.config.ts` como sí existía en el `datasource` block de schema.prisma
+pre-7.
+
+Solución: se creó una DB extra y genuinamente vacía en el mismo proyecto de
+Neon (`CREATE DATABASE prisma_shadow;` — el rol `neondb_owner` sí tiene
+permiso) y se agregó `SHADOW_DATABASE_URL` como env var separada, distinta de
+`DATABASE_URL`/`DIRECT_URL`. Además, la migración inicial (`init`) nunca
+había dejado una tabla `_prisma_migrations` en la DB real (mismo motivo:
+shadow==real confundió el flujo la primera vez) aunque el schema SÍ estaba
+completo y correcto (se verificó índices/FKs a mano contra la DB antes de
+confiar en esto) — se resolvió con `prisma migrate resolve --applied
+20260830155111_init` para bautizar el estado existente sin tocar datos, y
+recién ahí corrió limpio `prisma migrate dev --name add_user_credentials`.
+
+**Si se vuelve a tocar `prisma.config.ts` o el setup de Neon**: `DIRECT_URL`
+(misma DB, sin pooler, para migrar) y `SHADOW_DATABASE_URL` (DB vacía y
+DISTINTA, scratch space de `migrate dev`) son conceptos diferentes — no
+reusar una para la otra.
+
+### Verificado en esta sesión
+
+- Migración aplicada contra la Neon real, tabla `UserCredential` confirmada.
+- `tsc --noEmit` y `npm run build` limpios (17 rutas + 2 nuevas: `/dashboard/settings`,
+  `/api/settings/credentials`).
+- Round-trip de cifrado (`encrypt`/`decrypt`) probado directo, sin pasar por HTTP.
+- `setUserCredential` con un token de Meta inventado fue rechazado por
+  `verify()` **antes** de tocar la DB (confirmado que nunca persiste basura).
+- `listUserCredentialStatus` devuelve `configured: false` correctamente para
+  un usuario sin nada guardado.
+- **No probado**: guardar un token de Meta REAL y correr un análisis que
+  efectivamente lo use (no hay token real disponible en esta sesión).

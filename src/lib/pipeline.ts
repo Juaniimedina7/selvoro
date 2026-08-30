@@ -1,6 +1,7 @@
 import { collectMercadoLibre } from "@/lib/collectors/mercadolibre";
 import { collectMetaAds } from "@/lib/collectors/meta-ads";
 import { collectTrends } from "@/lib/collectors/trends";
+import { getUserCredential } from "@/lib/credentials/store";
 import { generateNarrative } from "@/lib/report/generate";
 import { computeScore, deriveVerdict } from "@/lib/scoring/engine";
 import type {
@@ -50,12 +51,21 @@ const EMPTY_META_ADS: MetaAdsData = {
   note: "Collector no ejecutado.",
 };
 
-export async function gatherEvidence(input: AnalyzeInput): Promise<AnalysisEvidence> {
+export async function gatherEvidence(
+  input: AnalyzeInput,
+  opts?: { clerkUserId?: string },
+): Promise<AnalysisEvidence> {
+  // Meta Ad Library es BYOK (credential por usuario, ver src/lib/credentials/).
+  // Sin usuario o sin credential cargado, el collector degrada con gracia.
+  const metaAdsCredential = opts?.clerkUserId
+    ? await getUserCredential(opts.clerkUserId, "meta_ads")
+    : null;
+
   // 1. Recolección en paralelo (cada collector degrada con gracia).
   const [mlResult, trendsResult, metaAdsResult] = await Promise.all([
     collectMercadoLibre(input.query),
     collectTrends(input.query),
-    collectMetaAds(input.query),
+    collectMetaAds(input.query, metaAdsCredential?.accessToken),
   ]);
 
   const ml = (mlResult.raw?.mercadoLibre as MercadoLibreData) ?? EMPTY_ML;
@@ -95,8 +105,11 @@ export async function gatherEvidence(input: AnalyzeInput): Promise<AnalysisEvide
   };
 }
 
-export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
-  const evidence = await gatherEvidence(input);
+export async function runAnalysis(
+  input: AnalyzeInput,
+  opts?: { clerkUserId?: string },
+): Promise<Report> {
+  const evidence = await gatherEvidence(input, opts);
 
   const narrative = await generateNarrative({
     input: evidence.input,

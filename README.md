@@ -8,10 +8,11 @@ producto y Selvoro devuelve un reporte con scoring explicable y una recomendaci�
 > Ad Library + scoring + reporte generado por IA, detrás de auth (Clerk) y
 > suscripción mensual (Mercado Pago) — con un **agente de chat** y un **servidor
 > MCP remoto** exponiendo las mismas capacidades (`analyze_product`,
-> `search_products`, `analyze_competitor`, `compare_markets`,
-> `generate_test_brief`, `get_report`, `list_reports`, `list_sources`). TikTok
-> Creative Center queda para una fase futura (sin API oficial). Ver el plan
-> completo en `~/.claude/plans/genera-un-plan-para-atomic-crystal.md`.
+> `search_products`, `compare_markets`, `generate_test_brief`, `get_report`,
+> `list_reports`, `list_sources`), y credenciales de integraciones de datos
+> cargadas por usuario (BYOK, `/dashboard/settings`). TikTok Creative Center
+> queda para una fase futura (sin API oficial). Ver el plan completo en
+> `~/.claude/plans/genera-un-plan-para-atomic-crystal.md`.
 
 ## Stack
 
@@ -46,16 +47,18 @@ src/lib/
   billing/                     # planes, suscripciones, créditos, Mercado Pago
   reports/                     # persistencia y consulta de reportes por usuario
   discovery/searchProducts.ts  # search_products: brainstorm LLM + fan-out de runAnalysis
-  agent/tools.ts               # definición única de las 8 tools (chat + MCP)
+  agent/tools.ts               # definición única de las 7 tools (chat + MCP)
   agent/chat.ts                # arma el Tool Runner para el chat web
+  credentials/                 # credenciales de integraciones cargadas por el usuario (BYOK)
 src/app/api/analyze/route.ts       # POST /api/analyze (requiere sesión + créditos)
 src/app/api/billing/                # alta/cancelación de suscripción
 src/app/api/webhooks/mercadopago/  # webhook de Mercado Pago (preapproval + cobros)
 src/app/api/cron/reconcile-subscriptions/  # red de seguridad diaria (Vercel Cron)
 src/app/api/chat/route.ts          # agente conversacional (streaming)
 src/app/api/[transport]/route.ts   # servidor MCP remoto (endpoint público: /api/mcp)
+src/app/api/settings/credentials/  # CRUD de credenciales de integraciones (BYOK)
 src/app/.well-known/               # metadata OAuth para clientes MCP (RFC 9728/8414)
-src/app/page.tsx, pricing/, dashboard/, dashboard/chat/  # UI
+src/app/page.tsx, pricing/, dashboard/, dashboard/chat/, dashboard/settings/  # UI
 ```
 
 ## Setup
@@ -67,14 +70,21 @@ npm install
 
 Completá en `.env.local`:
 
-- `ANTHROPIC_API_KEY` (requerido, para el reporte).
+- `ANTHROPIC_API_KEY` (requerido, para el reporte — es nuestra, no la carga el
+  usuario: ver sección de credenciales BYOK más abajo sobre qué sí es por usuario).
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` (requerido para auth —
   https://dashboard.clerk.com).
-- `DATABASE_URL` / `DIRECT_URL` (requerido para créditos/billing/historial —
-  cualquier Postgres sirve; Neon es gratis y sin setup).
+- `DATABASE_URL` / `DIRECT_URL` / `SHADOW_DATABASE_URL` (requerido para
+  créditos/billing/historial/credenciales — cualquier Postgres sirve; Neon es
+  gratis y sin setup. `SHADOW_DATABASE_URL` es una DB VACÍA Y DISTINTA de las
+  otras dos, dedicada para que `prisma migrate dev` pueda diffear — con Neon,
+  creá otra DB en el mismo proyecto, ej. `CREATE DATABASE prisma_shadow;`).
+- `CREDENTIALS_ENCRYPTION_KEY` (requerido para BYOK — `openssl rand -base64 32`).
 - `MP_ACCESS_TOKEN` / `MP_WEBHOOK_SECRET` (requerido para suscripciones — usá
   credenciales de sandbox de Mercado Pago mientras desarrollás).
-- `ML_ACCESS_TOKEN`, `META_ADS_ACCESS_TOKEN` (opcionales, degradan con gracia).
+- `ML_ACCESS_TOKEN` (opcional, server-side, degrada con gracia).
+- `META_ADS_ACCESS_TOKEN` **ya no existe como env var** — cada usuario carga su
+  propio token desde `/dashboard/settings` (ver sección BYOK más abajo).
 
 Con la DB configurada:
 
@@ -97,9 +107,36 @@ Abrí http://localhost:3000.
 - **Google Trends**: no hay API oficial; usamos el flujo no oficial (frágil por
   diseño). Si falla, el reporte sigue con menor confianza.
 - **Meta Ad Library**: API oficial gratuita, pero requiere App Review + verificación
-  de negocio de Meta (puede tardar). Sin `META_ADS_ACCESS_TOKEN`, degrada con gracia
+  de negocio de Meta (puede tardar). El token es **BYOK** (por usuario, ver abajo):
+  sin que el usuario cargue el suyo en `/dashboard/settings`, degrada con gracia
   igual que Mercado Libre.
 - El scoring es una **estimación explicable**, nunca una métrica de ventas/ROAS real.
+
+## Credenciales por usuario (BYOK)
+
+Las integraciones de **datos** (no las de IA) se cargan por usuario desde
+`/dashboard/settings`, no como env var compartida — cada uno analiza con sus
+propias cuentas. Hoy la única es **Meta Ad Library**. `ML_ACCESS_TOKEN` queda
+excluido a propósito (sigue siendo server-side, compartido) y
+`ANTHROPIC_API_KEY` también (es de IA, no de integraciones de datos — el
+sistema de créditos/planes no se ve afectado por esto).
+
+- `src/lib/credentials/crypto.ts` — AES-256-GCM con `CREDENTIALS_ENCRYPTION_KEY`.
+  Nunca se guarda un token en texto plano.
+- `src/lib/credentials/providers.ts` — registro **extensible**: sumar una
+  integración nueva es una entrada de código (`CREDENTIAL_PROVIDERS`), no una
+  migración de schema (la tabla `UserCredential` es genérica: `provider` es
+  `String` libre, `encryptedValue` es un JSON cifrado de forma libre).
+- `src/lib/credentials/store.ts` — `get/set/delete/listUserCredentialStatus`.
+  `setUserCredential` valida contra `provider.verify()` (una consulta real a
+  la API del proveedor) **antes** de guardar — nunca persiste un token roto
+  sin avisar.
+- El token del usuario se resuelve en `gatherEvidence()`
+  (`src/lib/pipeline.ts`) y se pasa a `collectMetaAds(query, accessToken)` —
+  el collector ya no lee ningún env var. `list_sources` (chat/MCP) también
+  refleja el estado *del usuario que pregunta* para Meta, mezclado con el
+  estado del servidor para Mercado Libre — dos niveles distintos, documentado
+  en la descripción de esa tool para no confundir al agente que la llama.
 
 ## Billing
 
@@ -159,11 +196,15 @@ juntos.
 
 ## Próximos pasos
 
-1. Conseguir credenciales reales (Clerk, DB, Mercado Pago sandbox) y correr el
-   flujo end-to-end, incluyendo el chat y una conexión MCP real.
-2. Registrar app de Mercado Libre y de Meta for Developers (App Review + business
-   verification) para sacar esas dos fuentes del modo degradado.
+1. Conseguir credenciales reales (Clerk, Mercado Pago sandbox) y correr el
+   flujo end-to-end, incluyendo el chat, una conexión MCP real y cargar un
+   token de Meta Ad Library de prueba en `/dashboard/settings`.
+2. Registrar app de Mercado Libre (server-side, sigue compartida) — Meta Ad
+   Library ahora la registra cada usuario para sí mismo (App Review + business
+   verification propios).
 3. Definir gating de créditos para el chat (sigue pagando tokens nuestros por
    turno, acotados por el Task Budget) y para `search_products` (paga el
    brainstorm) antes de cualquier lanzamiento público — hoy corren sin límite
    de uso, solo con el techo de tokens por turno del chat como freno.
+4. Habilitar la app OAuth de MCP en el dashboard de Clerk (Configure →
+   MCP/OAuth Applications) para poder conectar un cliente MCP externo de verdad.

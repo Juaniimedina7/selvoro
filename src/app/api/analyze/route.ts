@@ -76,7 +76,7 @@ export async function POST(request: Request) {
   };
 
   try {
-    const report = await runAnalysis(input);
+    const report = await runAnalysis(input, { clerkUserId: userId });
     await persistReport({ clerkUserId: userId, subscriptionId: debit.subscriptionId, report });
     return NextResponse.json(report);
   } catch (e) {
