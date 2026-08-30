@@ -1,0 +1,109 @@
+// Schema de negocio de Selvoro. La identidad del usuario vive en Clerk
+// (@clerk/nextjs) — estas tablas solo guardan estado de facturación y
+// reportes, referenciando usuarios por clerkUserId (string), sin tabla
+// User local para evitar desincronización con Clerk.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Plan {
+  id                  String   @id @default(cuid())
+  code                String   @unique // "starter" | "pro" | "agencia"
+  name                String
+  priceArs            Decimal  @db.Decimal(10, 2)
+  monthlyCredits      Int
+  mpPreapprovalPlanId String?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  clerkUserId        String
+  planId              String
+  plan                Plan               @relation(fields: [planId], references: [id])
+  status              SubscriptionStatus @default(PENDING)
+  mpPreapprovalId     String             @unique
+  mpPayerId           String?
+  currentPeriodStart  DateTime?
+  currentPeriodEnd    DateTime?
+  creditsRemaining    Int                @default(0)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  creditEvents CreditLedger[]
+  reports      Report[]
+
+  @@index([clerkUserId, status])
+}
+
+enum CreditEventType {
+  GRANT
+  DEBIT
+  REFUND
+  ADJUSTMENT
+}
+
+model CreditLedger {
+  id             String          @id @default(cuid())
+  clerkUserId    String
+  subscriptionId String?
+  subscription   Subscription?   @relation(fields: [subscriptionId], references: [id])
+  type           CreditEventType
+  amount         Int // con signo: + para GRANT/REFUND, - para DEBIT
+  reason         String // "monthly_reset" | "analysis:<reportId>" | "analysis:failed" | "manual_adjustment"
+  reportId       String?
+  createdAt      DateTime        @default(now())
+
+  @@index([clerkUserId, createdAt])
+}
+
+model Report {
+  id             String        @id @default(cuid())
+  clerkUserId    String
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+  query          String
+  ticketUsd      Decimal?      @db.Decimal(10, 2)
+  verdict        String
+  confidence     String
+  compositeScore Int
+  payload        Json
+  createdAt      DateTime      @default(now())
+
+  @@index([clerkUserId, createdAt])
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+model WebhookEvent {
+  id          String        @id @default(cuid())
+  provider    String        @default("mercadopago")
+  externalId  String        @unique
+  type        String
+  payload     Json
+  status      WebhookStatus @default(RECEIVED)
+  processedAt DateTime?
+  createdAt   DateTime      @default(now())
+}

@@ -3,6 +3,8 @@ import type {
   Confidence,
   DimensionScore,
   MercadoLibreData,
+  MetaAdsData,
+  MetaAdsMarketData,
   ScoreDimension,
   ScoreResult,
   TrendsData,
@@ -44,6 +46,7 @@ function band(value: number): "alta" | "media" | "baja" {
 interface Ctx {
   ml: MercadoLibreData;
   trends: TrendsData;
+  metaAds: MetaAdsData;
   input: AnalyzeInput;
 }
 
@@ -113,39 +116,128 @@ function evalCompetencia({ ml }: Ctx): DimEval {
   return { value: score, confidence: "media", evidence: ev };
 }
 
-function evalSaturacion({ ml }: Ctx): DimEval {
-  // Diferenciador clave (plan §9). Sin ads todavía, aproximamos con listings ML.
-  if (!ml.available || ml.totalListings == null) {
+function evalSaturacion({ ml, metaAds }: Ctx): DimEval {
+  // Diferenciador clave (plan §9). Combina listings de ML (conteo real) con
+  // anunciantes distintos activos en Meta Ads AR (muestra, hasta 100 anuncios).
+  let mlScore: number | null = null;
+  let mlEv = "";
+  if (ml.available && ml.totalListings != null) {
+    const t = ml.totalListings;
+    if (t < 30) {
+      mlScore = 70;
+      mlEv = `ML: ${t} publicaciones (saturación baja)`;
+    } else if (t < 150) {
+      mlScore = 45;
+      mlEv = `ML: ${t} publicaciones (saturación media)`;
+    } else {
+      mlScore = 20;
+      mlEv = `ML: ${t} publicaciones (saturación alta)`;
+    }
+  }
+
+  const ar = metaAds.available ? metaAds.ar : null;
+  let metaScore: number | null = null;
+  let metaEv = "";
+  if (ar && ar.uniqueAdvertisers != null) {
+    const a = ar.uniqueAdvertisers;
+    if (a === 0) {
+      metaScore = 75;
+      metaEv = "Meta: 0 anunciantes activos detectados (saturación baja)";
+    } else if (a <= 3) {
+      metaScore = 60;
+      metaEv = `Meta: ${a} anunciantes distintos con ads activos (saturación media-baja)`;
+    } else if (a <= 8) {
+      metaScore = 35;
+      metaEv = `Meta: ${a} anunciantes distintos con ads activos (saturación media-alta)`;
+    } else {
+      metaScore = 15;
+      metaEv = `Meta: ${a} anunciantes distintos con ads activos (saturación alta)`;
+    }
+  }
+
+  if (mlScore != null && metaScore != null) {
+    const value = clamp(mlScore * 0.55 + metaScore * 0.45);
+    let confidence: Confidence = "media";
+    let ev = `${mlEv}; ${metaEv}. Estimación combinada.`;
+    if (ar?.truncated) {
+      confidence = "baja";
+      ev += " El conteo de anunciantes de Meta es un piso (resultados truncados a 100), no el total real.";
+    }
+    return { value, confidence, evidence: ev };
+  }
+  if (mlScore != null) {
     return {
-      value: 50,
+      value: mlScore,
       confidence: "baja",
-      evidence:
-        "Saturación aproximada solo con marketplace y sin datos: baja confianza. Los anuncios activos (fase 2) mejorarán esta dimensión.",
+      evidence: `${mlEv}, sin datos de Meta Ads (token no configurado o sin anunciantes detectados).`,
     };
   }
-  const t = ml.totalListings;
-  let score: number;
-  let ev: string;
-  if (t < 30) {
-    score = 70;
-    ev = `${t} listings en AR: saturación estimada BAJA (proxy por marketplace).`;
-  } else if (t < 150) {
-    score = 45;
-    ev = `${t} listings en AR: saturación estimada MEDIA (proxy por marketplace).`;
-  } else {
-    score = 20;
-    ev = `${t} listings en AR: saturación estimada ALTA (proxy por marketplace).`;
+  if (metaScore != null) {
+    return {
+      value: metaScore,
+      confidence: "baja",
+      evidence: `${metaEv}, sin datos de Mercado Libre.`,
+    };
   }
-  return { value: score, confidence: "baja", evidence: ev };
-}
-
-function evalPersistencia(): DimEval {
-  // Requiere datos de anuncios (antigüedad, variantes) que llegan en fase 2.
   return {
     value: 50,
     confidence: "baja",
-    evidence:
-      "No disponible en este slice: la persistencia publicitaria requiere datos de Meta Ad Library / TikTok (fase 2).",
+    evidence: "Sin datos de Mercado Libre ni de Meta Ads: saturación no verificable.",
+  };
+}
+
+function evalPersistencia({ metaAds }: Ctx): DimEval {
+  if (!metaAds.available) {
+    return {
+      value: 50,
+      confidence: "baja",
+      evidence: "Sin acceso a Meta Ad Library: persistencia publicitaria no verificable.",
+    };
+  }
+
+  const arHasAds = metaAds.ar && (metaAds.ar.activeAdsCount ?? 0) > 0;
+  const usHasAds = metaAds.us && (metaAds.us.activeAdsCount ?? 0) > 0;
+
+  if (!arHasAds && !usHasAds) {
+    return {
+      value: 35,
+      confidence: "baja",
+      evidence: `Meta Ad Library no devolvió anuncios activos para "${metaAds.searchTermsUsed}" ni en AR ni en US. Puede ser señal real de baja inversión publicitaria, o un término de búsqueda que no matchea el copy real de los anuncios. Tratar como señal débil, no como ausencia confirmada.`,
+    };
+  }
+
+  const usedFallback = !arHasAds && usHasAds;
+  const market: MetaAdsMarketData = (usedFallback ? metaAds.us : metaAds.ar)!;
+  const maxDays = market.maxActiveDays ?? 0;
+  const count = market.activeAdsCount ?? 0;
+
+  let base: number;
+  if (maxDays >= 90) base = 85;
+  else if (maxDays >= 45) base = 70;
+  else if (maxDays >= 21) base = 55;
+  else if (maxDays >= 7) base = 40;
+  else if (maxDays >= 1) base = 28;
+  else base = 25;
+
+  let adjustment = 0;
+  if (count >= 5) adjustment = 10;
+  else if (count >= 2) adjustment = 5;
+
+  const value = clamp(base + adjustment);
+
+  if (usedFallback) {
+    return {
+      value,
+      confidence: "baja",
+      evidence: `Sin anuncios activos en AR; en US se detectaron ${count} anuncio(s) (el más antiguo con ${maxDays} días activo) — señal indirecta, no confirma tracción local.`,
+    };
+  }
+
+  const confidence: Confidence = count > 0 && !market.truncated ? "media" : "baja";
+  return {
+    value,
+    confidence,
+    evidence: `${count} anuncio(s) activo(s) detectado(s) en Meta Ad Library (AR); el más antiguo lleva ${maxDays} días corriendo.`,
   };
 }
 
@@ -212,7 +304,7 @@ function evalDiferenciacion(): DimEval {
     value: 50,
     confidence: "baja",
     evidence:
-      "Cualitativo: se apoya en el análisis del LLM sobre ángulos no explotados (ver secciones del reporte).",
+      "Cualitativo por diseño: los creative snippets de Meta Ads (cuando existen) se pasan al LLM como evidencia para sugerir ángulos, pero no se convierten en score — es una muestra parcial y sesgada, convertirla en un número sería falsa precisión.",
   };
 }
 
@@ -248,9 +340,10 @@ function worstConfidence(cs: Confidence[]): Confidence {
 export function computeScore(
   ml: MercadoLibreData,
   trends: TrendsData,
+  metaAds: MetaAdsData,
   input: AnalyzeInput,
 ): ScoreResult {
-  const ctx: Ctx = { ml, trends, input };
+  const ctx: Ctx = { ml, trends, metaAds, input };
   const dimensions: DimensionScore[] = (
     Object.keys(EVALUATORS) as ScoreDimension[]
   ).map((dim) => {

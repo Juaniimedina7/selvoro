@@ -154,6 +154,46 @@ export function ReportView({ report }: { report: Report }) {
         </Section>
       )}
 
+      {/* Anuncios activos (Meta) */}
+      {report.metaAds?.available && (report.metaAds.ar || report.metaAds.us) && (
+        <Section title="Anuncios activos (Meta)">
+          {report.metaAds.ar && (report.metaAds.ar.activeAdsCount ?? 0) > 0 ? (
+            <div style={{ fontSize: 13.5, color: "var(--text)", lineHeight: 1.7 }}>
+              <div>Anuncios activos detectados (AR): {report.metaAds.ar.activeAdsCount}</div>
+              <div>Anunciantes distintos (AR): {report.metaAds.ar.uniqueAdvertisers ?? "—"}</div>
+              <div>
+                Antigüedad máxima / promedio: {report.metaAds.ar.maxActiveDays ?? "—"} /{" "}
+                {report.metaAds.ar.avgActiveDays ?? "—"} días
+              </div>
+              {report.metaAds.ar.topAdvertisers.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <BulletList
+                    items={report.metaAds.ar.topAdvertisers.map(
+                      (a) => `${a.pageName} — ${a.activeDays ?? "—"} días activo`,
+                    )}
+                  />
+                </div>
+              )}
+            </div>
+          ) : report.metaAds.us && (report.metaAds.us.activeAdsCount ?? 0) > 0 ? (
+            <div style={{ fontSize: 13.5, color: "var(--text)", lineHeight: 1.7 }}>
+              <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "0 0 8px" }}>
+                Sin anuncios activos en AR. Referencia de otro mercado (US):
+              </p>
+              <div>Anuncios activos detectados (US): {report.metaAds.us.activeAdsCount}</div>
+              <div>
+                Antigüedad máxima / promedio: {report.metaAds.us.maxActiveDays ?? "—"} /{" "}
+                {report.metaAds.us.avgActiveDays ?? "—"} días
+              </div>
+            </div>
+          ) : (
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>
+              Sin anuncios activos detectados en AR ni en US para este producto.
+            </p>
+          )}
+        </Section>
+      )}
+
       <Section title="Fuentes utilizadas">
         <BulletList items={report.sources} />
       </Section>

@@ -2,6 +2,7 @@ import { getLlm } from "@/lib/llm/client";
 import type {
   AnalyzeInput,
   MercadoLibreData,
+  MetaAdsData,
   ReportNarrative,
   ScoreResult,
   TrendsData,
@@ -21,7 +22,9 @@ REGLAS ESTRICTAS:
 - Diferenciá hechos observados de hipótesis. Marcá los supuestos.
 - Escribí en español rioplatense, claro y accionable. Sin relleno.
 - No repitas literalmente los números; interpretalos para la decisión de testear/investigar/descartar.
-- El scoring que te paso es una ESTIMACIÓN explicable, no una métrica de ventas. Tratalo así.`;
+- El scoring que te paso es una ESTIMACIÓN explicable, no una métrica de ventas. Tratalo así.
+- La antigüedad y cantidad de anuncios activos en Meta Ad Library es un proxy de que el anunciante sostiene el testeo, NUNCA una medida de ROAS, CPA, gasto publicitario o conversión real.
+- Si Meta Ad Library no devolvió anuncios activos (0 en AR y US), no lo redactes como "sin competencia confirmada": es ambiguo (puede ser el término de búsqueda, no falta real de anunciantes). Decilo con esa cautela.`;
 
 const SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -64,10 +67,11 @@ export async function generateNarrative(params: {
   input: AnalyzeInput;
   ml: MercadoLibreData;
   trends: TrendsData;
+  metaAds: MetaAdsData;
   score: ScoreResult;
   verdict: string;
 }): Promise<ReportNarrative> {
-  const { input, ml, trends, score, verdict } = params;
+  const { input, ml, trends, metaAds, score, verdict } = params;
 
   const evidence = {
     producto: input.query,
@@ -75,6 +79,7 @@ export async function generateNarrative(params: {
     ticketObjetivoUsd: input.ticketUsd ?? null,
     mercadoLibre: ml,
     tendencias: trends,
+    anunciosMeta: metaAds,
     scoring: {
       compuesto: score.composite,
       banda: score.compositeBand,

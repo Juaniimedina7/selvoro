@@ -650,3 +650,243 @@ En cada sección:
 
 Antes de presentar el plan final, haceme únicamente las preguntas realmente críticas cuya respuesta pueda cambiar de forma importante el MVP o la arquitectura.
 No hagas preguntas que puedan resolverse proponiendo un supuesto razonable.
+
+---
+
+## Estado de implementación (post-planeamiento)
+
+Lo de arriba fue el brief original de planeamiento. Esta sección documenta qué
+se construyó después, sobre el slice 1 (Mercado Libre + Trends + scoring +
+reporte LLM). Plan completo de esta etapa en
+`~/.claude/plans/genera-un-plan-para-atomic-crystal.md`.
+
+### Fase A — Meta Ad Library + scoring real
+
+- Nuevo collector `src/lib/collectors/meta-ads.ts`: consulta `/ads_archive` de
+  la Graph API en paralelo para AR y US, mismo patrón de degradación con
+  gracia que `mercadolibre.ts`. Sin `META_ADS_ACCESS_TOKEN` configurado,
+  degrada sin romper el pipeline (requiere App Review + verificación de
+  negocio de Meta, todavía no gestionado).
+- `evalPersistencia` (antes stub) y `evalSaturacion` en
+  `src/lib/scoring/engine.ts` ahora usan datos reales de anuncios activos
+  (antigüedad, anunciantes distintos) combinados con Mercado Libre.
+- `evalDiferenciacion`/`evalRiesgo` siguen siendo cualitativos a propósito
+  (no hay forma honesta de convertir esos datos en un score sin falsear
+  precisión).
+- TikTok Creative Center: **omitido** en esta fase (decisión explícita, no
+  tiene API oficial).
+
+### Fase B — Auth + DB
+
+- **Auth: Clerk** (`@clerk/nextjs`), no NextAuth como se había planeado
+  originalmente — decisión tomada a mitad de implementación porque Clerk da
+  email/password + Google OAuth funcionando sin que haya que crear
+  credenciales de Google Cloud de entrada. `middleware.ts` solo habilita
+  detección de sesión; la protección es "resource-based" (`auth()`/
+  `auth.protect()` en cada route handler/page), no por path-matching en
+  middleware — Clerk deprecó `createRouteMatcher` por eso.
+- **DB: Postgres vía Prisma 7** (`prisma/schema.prisma`, `prisma.config.ts`).
+  Prisma 7 cambió la config: `datasource.url` ya no va en el schema, vive en
+  `prisma.config.ts`, y `PrismaClient` necesita un driver adapter
+  (`@prisma/adapter-pg`) — no hay engine embebido. Ver
+  `src/lib/db/prisma.ts`.
+- No hay tabla `User` local: la identidad vive en Clerk, las tablas de
+  negocio (`Subscription`, `CreditLedger`, `Report`) referencian usuarios
+  por `clerkUserId` (string).
+- No se modeló `Workspace`/multi-tenancy real — el plan "Agencia" es solo un
+  tier de más créditos, no un espacio compartido.
+
+### Fase C — Billing (Mercado Pago)
+
+- 3 planes (`src/lib/billing/plans.ts`, fuente de verdad única, sembrada en
+  `prisma/seed.ts`): Starter $9.900/mes (10 análisis), Pro $24.900/mes (30),
+  Agencia $59.900/mes (100). **Precios tentativos**, sin validar contra costo
+  real de Claude Opus por análisis.
+- Suscripción recurrente vía Mercado Pago **Preapproval**
+  (`src/lib/billing/subscriptions.ts`), créditos que se resetean cada ciclo
+  (no acumulables).
+- Webhook (`src/app/api/webhooks/mercadopago/route.ts`) valida firma HMAC
+  (`src/lib/billing/webhookVerify.ts`, manifest
+  `id:{data.id};request-id:{x-request-id};ts:{ts};`) y maneja **dos topics**
+  distintos de MP por separado: `subscription_preapproval` (alta/pausa/
+  cancelación de la suscripción) y `subscription_authorized_payment` (cada
+  cobro recurrente individual — acá es donde se resetean los créditos
+  mensuales, vía el recurso `Invoice`/`authorized_payments`). Nunca confía en
+  el payload del POST, siempre re-consulta el recurso a MP antes de mutar
+  estado local.
+- Débito de crédito atómico (`checkAndDebitCredit` en
+  `src/lib/billing/credits.ts`) **antes** de correr el análisis, con refund
+  automático si el análisis falla.
+- Cron diario (`/api/cron/reconcile-subscriptions`, protegido por
+  `CRON_SECRET`, configurado en `vercel.json`) como red de seguridad si un
+  webhook no llega.
+- Cancelación corta el acceso de inmediato — Mercado Pago Preapproval no
+  soporta "cancelar al fin del período" como Stripe.
+
+### Fase D — UI
+
+`/pricing` (planes + alta de suscripción), `/dashboard` (plan actual,
+créditos restantes, cancelar, historial de reportes), `/dashboard/reports/[id]`
+(detalle, reusa `ReportView`), `/sign-in`, `/sign-up` (componentes de Clerk),
+header global con estado de sesión. La landing (`/`) es Server Component:
+sin sesión muestra marketing, con sesión muestra el formulario de análisis
+(extraído a `src/components/AnalyzeForm.tsx`).
+
+### Verificado en esta sesión
+
+`tsc --noEmit` y `npm run build` pasan limpio de punta a punta. **No** se
+probó el flujo end-to-end en navegador porque requiere credenciales reales
+que solo el usuario puede generar (Clerk, un Postgres real, Mercado Pago
+sandbox). Antes de asumir que algo funciona en runtime, correr:
+
+```bash
+cp .env.example .env.local   # completar ANTHROPIC_API_KEY, Clerk, DATABASE_URL/DIRECT_URL, MP_*
+npm install
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
+
+### Deuda técnica conocida (documentada, no bloqueante)
+
+- Timeout duro de la función serverless durante el análisis puede dejar un
+  crédito debitado sin reporte generado (el `catch` de refund no llega a
+  correr). Solución de fondo: pasar `/api/analyze` a un flujo asíncrono con
+  `run_id` (ya anticipado como fase 2 desde el código original).
+- Una sola suscripción activa por usuario, sin upgrade/downgrade fluido.
+- `input.query` puede ser una URL (AliExpress/tienda) y se pasa cruda a los
+  tres collectors sin normalizar — problema preexistente, no introducido acá.
+
+---
+
+## Estado de implementación — agente de chat + servidor MCP
+
+Segunda ronda de trabajo sobre este slice: el "agente para hablar" y las
+herramientas MCP que el brief original imaginaba como fase 2. Plan completo
+(mismo archivo que las fases A-D, reescrito para esta ronda) en
+`~/.claude/plans/genera-un-plan-para-atomic-crystal.md`.
+
+Decisiones del usuario para esta ronda: el set de tools completo del brief
+(no solo lo ya construido), ambas superficies (chat web + MCP remoto), y
+**sin gating de créditos por ahora** — riesgo de costo real y consciente,
+sobre todo por `search_products` (~6 llamadas a Opus por invocación).
+
+### Qué se construyó
+
+- **`src/lib/agent/tools.ts`**: definición única de 8 tools (`analyze_product`,
+  `get_report`, `list_reports`, `list_sources`, `compare_markets`,
+  `analyze_competitor`, `generate_test_brief`, `search_products`), consumida
+  por el chat y por el MCP sin duplicar lógica. `estimate_saturation` del
+  brief no se expone aparte: ya es una dimensión del `score` existente.
+- **Honestidad sobre qué es nuevo de verdad**: `analyze_competitor` es
+  mayormente un alias de `analyze_product` (mismo pipeline, distinto framing
+  de la narrativa vía el nuevo parámetro `framing` en
+  `report/generate.ts`/`pipeline.ts`) — sin Similarweb/BuiltWith no hay
+  señales de competidor distintas. `compare_markets` no agrega collectors: los
+  campos AR/US de `TrendsData`/`MetaAdsData` ya existían, solo se re-proyectan
+  (`report/compareMarkets.ts`). `search_products`
+  (`discovery/searchProducts.ts`) es el único con una fuente de "datos" nueva
+  real: un LLM brainstormea candidatos (ideación, sin datos), y cada uno pasa
+  por `runAnalysis` completo — capado a 8 (`HARD_MAX_CANDIDATES`), default 5.
+- **Chat web** (`/dashboard/chat`, `src/lib/agent/chat.ts`,
+  `src/app/api/chat/route.ts`): Tool Runner de Anthropic
+  (`client.beta.messages.toolRunner` + `betaZodTool`), streaming de texto
+  plano al cliente. Historial de conversación NO se persiste (se resend desde
+  el cliente cada turno) — mejora futura, no bloqueante.
+- **Servidor MCP remoto** (`src/app/api/[transport]/route.ts`, endpoint
+  público `/api/mcp` vía `basePath: "/api"` de `mcp-handler`): autenticado con
+  `@clerk/mcp-tools` — `verifyClerkToken(auth({acceptsToken:"oauth_token"}),
+  token)` devuelve `AuthInfo` con `extra.userId` = el `clerkUserId`, sin tabla
+  de API keys propia. Requiere dos rutas de metadata OAuth
+  (`src/app/.well-known/oauth-protected-resource/`,
+  `.../oauth-authorization-server/`, vía helpers `*HandlerClerk` de
+  `@clerk/mcp-tools/next`) y habilitar la app OAuth de MCP en el dashboard de
+  Clerk (paso manual, no hay env var nueva).
+
+### Decisión técnica no anticipada en el plan: mcp-handler v1, no v2
+
+El plan original asumía `mcp-handler` v2 (zod v4, `createMcpHandler` de 1
+argumento, `ctx.http.authInfo`). Al implementar se descubrió que
+`@clerk/mcp-tools@0.6.0` todavía depende de `@modelcontextprotocol/sdk` **v1**
+(`^1.29.0`), mientras que `mcp-handler` v2 requiere el SDK **v2**
+(`@modelcontextprotocol/server`) — son paquetes distintos, sin
+interoperabilidad. Se resolvió usando `mcp-handler@^1.1.0` (misma generación
+de SDK que Clerk) en vez de v2, con estas implicancias:
+
+- `createMcpHandler(initFn, serverOptions, config)` de 3 argumentos, ruta
+  física en `src/app/api/[transport]/route.ts` con `config.basePath: "/api"`
+  (no un `route.ts` fijo como en v2).
+- Dentro de un tool handler, la identidad verificada llega como
+  `extra.authInfo` (segundo parámetro del callback de `registerTool`), no
+  `ctx.http?.authInfo` (eso es v2).
+- `inputSchema` en `registerTool` espera el **shape** de zod (`tool.schema.shape`,
+  un `Record<string, ZodType>`), no un `ZodObject` envuelto — por eso
+  `ToolDef.schema` en `agent/tools.ts` está tipado como
+  `z.ZodObject<z.ZodRawShape>` en vez de `z.ZodType` genérico.
+- `@clerk/mcp-tools` pide `@modelcontextprotocol/sdk@^1.29.0` pero
+  `mcp-handler@1.1.0` fija ese peer en `1.26.0` exacto (conflicto de rango) —
+  se instaló con `--legacy-peer-deps` y se agregó `overrides` en
+  `package.json` forzando una única versión (`^1.29.0`, resuelve a `1.30.0`)
+  en todo el árbol, para no terminar con dos copias del SDK conviviendo.
+  **Riesgo documentado, no verificado en runtime real todavía**: si
+  `@clerk/mcp-tools` migra a la v2 del SDK en el futuro, hay que revisar este
+  override y la versión de `mcp-handler` juntos.
+- Zod **sí** se mantuvo en v4 en todo el proyecto (no hizo falta el fork a v3
+  que el plan anticipaba como riesgo): se verificó que
+  `@modelcontextprotocol/sdk@1.30.0` y `zod-to-json-schema@3.25.x` soportan
+  `zod ^3.25 || ^4` nativamente.
+
+### Verificado en esta sesión
+
+`tsc --noEmit` y `npm run build` pasan limpio con las 17 rutas (incluyendo
+`/api/[transport]`, los dos `.well-known/*`, y `/api/chat`). **No** se probó
+en runtime real: ni el chat (necesita `ANTHROPIC_API_KEY` real + DB), ni una
+conexión MCP real desde un cliente externo (necesita la app OAuth de MCP
+habilitada en el dashboard de Clerk). El flujo de auth vía
+`extra.authInfo.extra.userId` está confirmado leyendo el código fuente
+publicado de `verifyClerkToken` (no es una suposición), pero el handshake
+OAuth completo end-to-end no se ejecutó.
+
+### Riesgo de costo sin resolver
+
+Ni el chat ni las tools MCP descuentan créditos todavía. `search_products`
+por sí solo puede disparar ~6 llamadas a Claude Opus por invocación. Es una
+decisión explícita del usuario para esta entrega, pero es el primer punto a
+resolver antes de exponer esto públicamente.
+
+**Actualización (mismo día, post-feedback del usuario):** el usuario señaló
+correctamente que en MCP el LLM que orquesta las tool calls es el del cliente
+externo (pagado por esa sesión, no por nosotros) — no tenía sentido que
+`analyze_product`/`compare_markets`/cada candidato de `search_products`
+hicieran, ENCIMA, su propia llamada a Claude para redactar una narrativa que
+el agente que llama ya puede escribir solo. Se refactorizó:
+
+- `src/lib/pipeline.ts` separa `gatherEvidence()` (collectors + scoring,
+  SIN LLM) de `runAnalysis()` (`gatherEvidence` + narrativa LLM, usado solo
+  por `/api/analyze`, el formulario web, que no tiene otro LLM río abajo).
+- Las tools del agente (`analyze_product`, `compare_markets`, cada candidato
+  de `search_products`) ahora usan `gatherEvidence()` y devuelven evidencia
+  cruda (signals + score + el `evidence` textual determinista de cada
+  dimensión, ya armado sin LLM en `scoring/engine.ts`) — 0 llamadas propias a
+  Claude por tool call. Tampoco persisten en la tabla `Report` (esa tabla
+  sigue siendo solo para lo creado desde el formulario web).
+- `analyze_competitor` se eliminó como tool separada: sin narrativa propia,
+  el único diferenciador que tenía (el parámetro `framing`) dejó de tener
+  sentido — `analyze_product` ya acepta tiendas/competidores como query.
+  Quedaron 7 tools, no 8.
+- `search_products` sigue pagando 1 llamada nuestra (el brainstorm de
+  candidatos) porque necesita ideas concretas antes de poder correr
+  collectors — el usuario decidió mantener esto así (opción elegida sobre
+  también delegarlo al agente que llama).
+- `generate_test_brief` y `get_report`/`list_reports` no cambiaron: siguen
+  operando sobre reportes YA persistidos (con narrativa completa) creados
+  desde el formulario web.
+- **Chat con Task Budget**: `src/lib/agent/chat.ts` ahora pasa
+  `output_config.task_budget` (beta `task-budgets-2026-03-13`, techo
+  configurable por `CHAT_TASK_BUDGET_TOKENS`, default 50.000) al
+  `toolRunner` — techo de tokens por turno agéntico completo (incluye tool
+  calls encadenados), no por respuesta individual. Pedido explícito del
+  usuario ("que el agente tenga una cantidad de tokens").
+
+`tsc --noEmit` y `npm run build` pasan limpio después de este ajuste (17
+rutas, sin cambios en la cuenta de rutas — solo lógica interna).

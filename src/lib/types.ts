@@ -68,6 +68,28 @@ export interface TrendsData {
   note?: string;
 }
 
+/** Anuncios activos detectados en Meta Ad Library para un mercado puntual. */
+export interface MetaAdsMarketData {
+  activeAdsCount: number | null;
+  /** true si activeAdsCount llegó al límite de la página (100): es un piso, no el total real. */
+  truncated: boolean;
+  uniqueAdvertisers: number | null;
+  avgActiveDays: number | null;
+  maxActiveDays: number | null;
+  topAdvertisers: { pageName: string; activeDays: number | null }[];
+  /** Fragmentos de copy de anuncios reales, solo para que el LLM sugiera ángulos. Nunca se usan en el scoring. */
+  sampleAdSnippets: string[];
+}
+
+/** Datos de Meta Ad Library, AR vs US (mismo patrón dual que TrendsData). */
+export interface MetaAdsData {
+  available: boolean;
+  ar: MetaAdsMarketData | null;
+  us: MetaAdsMarketData | null;
+  searchTermsUsed: string;
+  note?: string;
+}
+
 /** Subpuntaje explicable de una dimensión. */
 export interface DimensionScore {
   dimension: ScoreDimension;
@@ -105,6 +127,38 @@ export interface Recommendation {
   rationale: string;
 }
 
+/** Brief de testeo publicitario generado a partir de un Report ya guardado (tool generate_test_brief). */
+export interface TestBrief {
+  angulos: string[];
+  hooks: string[];
+  publicoObjetivo: string[];
+  ofertaSugerida: string;
+  presupuestoInicialBanda: "bajo" | "medio" | "alto";
+  planSemana1: string[];
+  advertencia: string;
+}
+
+/**
+ * Evidencia cruda de un análisis: collectors + scoring, SIN narrativa LLM.
+ * La usan las tools del agente (chat/MCP) — el LLM que llama ya puede
+ * sintetizar su propia narrativa a partir de esto (incluye el `evidence`
+ * textual determinista de cada dimensión del score), sin que nosotros
+ * paguemos una llamada a Claude por cada tool call.
+ */
+export interface AnalysisEvidence {
+  input: AnalyzeInput;
+  createdAt: string;
+  signals: Signal[];
+  mercadoLibre: MercadoLibreData;
+  trends: TrendsData;
+  metaAds: MetaAdsData;
+  score: ScoreResult;
+  verdict: Verdict;
+  confidence: Confidence;
+  sources: string[];
+  dataCoverageNote: string;
+}
+
 /** Reporte final que consume la web (y en fase 2, el MCP). */
 export interface Report {
   input: AnalyzeInput;
@@ -112,6 +166,7 @@ export interface Report {
   signals: Signal[];
   mercadoLibre: MercadoLibreData;
   trends: TrendsData;
+  metaAds: MetaAdsData;
   score: ScoreResult;
   narrative: ReportNarrative;
   recommendation: Recommendation;
