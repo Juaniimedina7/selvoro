@@ -970,3 +970,87 @@ reusar una para la otra.
   un usuario sin nada guardado.
 - **No probado**: guardar un token de Meta REAL y correr un análisis que
   efectivamente lo use (no hay token real disponible en esta sesión).
+
+---
+
+## Estado de implementación — Tienda Nube, Mercado Libre vendedor, BuiltWith + OAuth genérico
+
+Pedido: "arma el panorama completo" de qué otras integraciones tiene sentido
+sumar. Se investigó Tienda Nube, Mercado Libre como vendedor, Similarweb y
+BuiltWith; Shopify quedó afuera a pedido explícito. Plan completo (mismo
+archivo, reescrito para esta ronda) en
+`~/.claude/plans/genera-un-plan-para-atomic-crystal.md`.
+
+### Investigación que cambió el rumbo del plan
+
+- **Tienda Nube NO necesita NubeSDK**: ese SDK es solo para apps embebidas en
+  el admin de TN vía iframe. Una "aplicación independiente" (leer datos vía
+  API, que es todo lo que necesitamos) usa OAuth2 plano. Esto tumbó la
+  preocupación inicial de que el deadline del 30/08/2026 de NubeSDK
+  (¡el mismo día de esta sesión!) nos obligara a un desarrollo mucho más
+  pesado — no aplica a nuestro caso de uso.
+- **El `redirect_uri` de Tienda Nube NO se pasa dinámicamente en la URL de
+  autorización** — se registra una vez en el panel de partner al crear la
+  app. Distinto de Mercado Libre, que sí lo pide en cada request.
+- **Refresh token de Mercado Libre es de un solo uso**: cada refresh (access
+  token dura 6hs) devuelve un refresh_token nuevo que hay que persistir de
+  inmediato — el anterior queda inválido. Sin locking distribuido (riesgo
+  documentado, aceptado para el volumen actual).
+- **Similarweb se descartó**: API enterprise-only, ~US$35.000/año+, sin plan
+  individual — no viable ni como BYOK ni pagada por nosotros en esta etapa.
+- **BuiltWith tiene un Free API genuino** (conteo de categorías tecnológicas
+  por dominio, sin costo, solo requiere una API key de registro gratuito) —
+  por eso quedó como collector server-side, no BYOK (no es dato personal del
+  usuario).
+
+### Qué se construyó
+
+- **`CredentialProvider` pasó a discriminated union** `authType: "manual" |
+  "oauth"` en `src/lib/credentials/providers.ts`. Meta Ads es `manual` (sin
+  cambios de comportamiento); se agregaron `tienda_nube` y
+  `mercadolibre_seller` como `oauth`, implementados en
+  `src/lib/credentials/oauth/tiendaNube.ts` y `mercadoLibreSeller.ts`.
+- **Sin migración de schema**: `UserCredential.encryptedValue` (JSON cifrado
+  de forma libre, diseño de la ronda anterior) ya soportaba guardar un token
+  set OAuth completo (`accessToken`, `refreshToken`, `expiresAt`,
+  `accountLabel`, `externalAccountId`) sin tocar la tabla — la decisión de
+  hacerlo genérico desde el principio pagó.
+- **`getUserCredential` (store.ts) refresca sola** un token OAuth vencido (o
+  a <60s de vencer) antes de devolverlo, usando `provider.refresh()` si
+  existe, y persiste el token set nuevo.
+- **`state` del OAuth firmado con HMAC** (`src/lib/credentials/oauthState.ts`),
+  reusa `CREDENTIALS_ENCRYPTION_KEY` como secreto de firma — sin tabla de
+  "authorization requests" pendientes, TTL de 10 minutos, payload
+  autocontenido (`clerkUserId`, `provider`, `nonce`, `iat`).
+- **Rutas genéricas** `src/app/api/settings/credentials/[provider]/connect|callback/route.ts`
+  — sirven para CUALQUIER provider `oauth` futuro, no están hardcodeadas a
+  estos dos.
+- **3 collectors nuevos**: `tiendanube-store.ts`, `mercadolibre-seller.ts`
+  (ambos con degradación con gracia sin credential), `builtwith.ts`
+  (server-side, `BUILTWITH_API_KEY`).
+- **3 tools nuevas** en `agent/tools.ts`: `tienda_nube_snapshot`,
+  `mercadolibre_seller_snapshot`, `lookup_tech_stack` — total 10 tools.
+  Deliberadamente NO se integró el dato de tienda propia al scoring de
+  `analyze_product` (queda como mejora futura explícita, documentada en el
+  plan).
+- **UI**: `IntegrationCard.tsx` ahora rama por `authType` — `oauth` muestra
+  un botón "Conectar con {label}" (link a `/connect`) o el `accountLabel` +
+  "Desconectar" si ya está conectado; `manual` sigue con el form de siempre.
+  La página de settings muestra un banner de éxito/error leyendo
+  `?connected=`/`?error=` del redirect del callback.
+
+### Verificado en esta sesión
+
+- `tsc --noEmit` y `npm run build` limpios (20 rutas, incluyendo las 2 rutas
+  dinámicas `[provider]/connect` y `[provider]/callback`).
+- Firmado/verificación de `state`: round-trip válido, provider incorrecto
+  rechazado, firma alterada rechazada — probado directo sin pasar por HTTP.
+- Los 3 collectors nuevos degradan con gracia correctamente sin credenciales
+  configuradas (BuiltWith sin key, Tienda Nube/ML-vendedor sin credential).
+- Las 10 tools cargan correctamente en `AGENT_TOOLS`.
+- **No probado, porque no hay apps registradas todavía**: el handshake OAuth
+  completo real contra Tienda Nube o Mercado Libre (connect → redirect real
+  → callback → token guardado), y `lookup_tech_stack` contra la API real de
+  BuiltWith (no hay `BUILTWITH_API_KEY` cargada). Los endpoints exactos de
+  Tienda Nube (`/products`, `/orders`, `/store`) están armados siguiendo la
+  convención documentada pero no se golpearon contra una tienda real.

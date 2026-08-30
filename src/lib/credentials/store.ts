@@ -1,8 +1,24 @@
 import { prisma } from "@/lib/db/prisma";
 import { decrypt, encrypt } from "@/lib/credentials/crypto";
-import { CREDENTIAL_PROVIDERS, getCredentialProvider } from "@/lib/credentials/providers";
+import { CREDENTIAL_PROVIDERS, getCredentialProvider, type OAuthTokenSet } from "@/lib/credentials/providers";
 
-/** Devuelve el credential ya desencriptado, o null si el usuario no lo cargó. */
+const REFRESH_SAFETY_MARGIN_MS = 60_000;
+
+async function persist(clerkUserId: string, providerId: string, value: Record<string, string>): Promise<void> {
+  const encryptedValue = encrypt(JSON.stringify(value));
+  await prisma.userCredential.upsert({
+    where: { clerkUserId_provider: { clerkUserId, provider: providerId } },
+    update: { encryptedValue },
+    create: { clerkUserId, provider: providerId, encryptedValue },
+  });
+}
+
+/**
+ * Devuelve el credential ya desencriptado, o null si el usuario no lo cargó.
+ * Para providers OAuth con `expiresAt` vencido (o por vencer), refresca
+ * automáticamente y persiste el token set nuevo antes de devolverlo — sin
+ * locking distribuido (aceptable para el volumen actual; ver plan §riesgos).
+ */
 export async function getUserCredential(
   clerkUserId: string,
   providerId: string,
@@ -11,10 +27,25 @@ export async function getUserCredential(
     where: { clerkUserId_provider: { clerkUserId, provider: providerId } },
   });
   if (!row) return null;
-  return JSON.parse(decrypt(row.encryptedValue)) as Record<string, string>;
+
+  const value = JSON.parse(decrypt(row.encryptedValue)) as Record<string, string>;
+
+  const provider = getCredentialProvider(providerId);
+  if (provider?.authType === "oauth" && provider.refresh && value.expiresAt) {
+    const expiresAt = new Date(value.expiresAt).getTime();
+    if (Number.isFinite(expiresAt) && Date.now() >= expiresAt - REFRESH_SAFETY_MARGIN_MS) {
+      if (!value.refreshToken) return value; // no hay forma de refrescar, devolvemos lo que hay
+      const fresh = await provider.refresh(value.refreshToken);
+      const freshValue = fresh as unknown as Record<string, string>;
+      await persist(clerkUserId, providerId, freshValue);
+      return freshValue;
+    }
+  }
+
+  return value;
 }
 
-/** Valida contra provider.verify() y recién ahí guarda cifrado. Lanza si no valida. */
+/** Valida contra provider.verify() y recién ahí guarda cifrado. Solo para providers "manual". Lanza si no valida. */
 export async function setUserCredential(
   clerkUserId: string,
   providerId: string,
@@ -22,16 +53,27 @@ export async function setUserCredential(
 ): Promise<void> {
   const provider = getCredentialProvider(providerId);
   if (!provider) throw new Error(`Integración desconocida: ${providerId}`);
+  if (provider.authType !== "manual") {
+    throw new Error(`${providerId} se conecta vía OAuth, no se puede cargar un valor manual.`);
+  }
 
   const result = await provider.verify(value);
   if (!result.ok) throw new Error(result.message);
 
-  const encryptedValue = encrypt(JSON.stringify(value));
-  await prisma.userCredential.upsert({
-    where: { clerkUserId_provider: { clerkUserId, provider: providerId } },
-    update: { encryptedValue },
-    create: { clerkUserId, provider: providerId, encryptedValue },
-  });
+  await persist(clerkUserId, providerId, value);
+}
+
+/**
+ * Guarda un token set ya obtenido de un intercambio OAuth exitoso — sin
+ * pasar por verify() (el propio intercambio ya probó que es válido). Solo la
+ * usa el callback route.
+ */
+export async function saveOAuthCredential(
+  clerkUserId: string,
+  providerId: string,
+  tokenSet: OAuthTokenSet,
+): Promise<void> {
+  await persist(clerkUserId, providerId, tokenSet as unknown as Record<string, string>);
 }
 
 export async function deleteUserCredential(clerkUserId: string, providerId: string): Promise<void> {
@@ -56,8 +98,13 @@ export async function listUserCredentialStatus(clerkUserId: string): Promise<Cre
     let maskedPreview: string | null = null;
     try {
       const value = JSON.parse(decrypt(row.encryptedValue)) as Record<string, string>;
-      const first = Object.values(value)[0] ?? "";
-      maskedPreview = first.length >= 4 ? `••••${first.slice(-4)}` : "••••";
+      if (value.accountLabel) {
+        // nombre de tienda / nickname: no es sensible, se muestra completo
+        maskedPreview = value.accountLabel;
+      } else {
+        const first = Object.values(value)[0] ?? "";
+        maskedPreview = first.length >= 4 ? `••••${first.slice(-4)}` : "••••";
+      }
     } catch {
       maskedPreview = null;
     }

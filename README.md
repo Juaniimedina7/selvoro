@@ -47,16 +47,19 @@ src/lib/
   billing/                     # planes, suscripciones, créditos, Mercado Pago
   reports/                     # persistencia y consulta de reportes por usuario
   discovery/searchProducts.ts  # search_products: brainstorm LLM + fan-out de runAnalysis
-  agent/tools.ts               # definición única de las 7 tools (chat + MCP)
+  agent/tools.ts               # definición única de las 10 tools (chat + MCP)
   agent/chat.ts                # arma el Tool Runner para el chat web
   credentials/                 # credenciales de integraciones cargadas por el usuario (BYOK)
+  credentials/oauth/           # providers OAuth (Tienda Nube, Mercado Libre vendedor)
+  collectors/tiendanube-store.ts, mercadolibre-seller.ts  # datos reales de la tienda propia (BYOK/OAuth)
+  collectors/builtwith.ts      # stack tecnológico de un dominio (server-side, no BYOK)
 src/app/api/analyze/route.ts       # POST /api/analyze (requiere sesión + créditos)
 src/app/api/billing/                # alta/cancelación de suscripción
 src/app/api/webhooks/mercadopago/  # webhook de Mercado Pago (preapproval + cobros)
 src/app/api/cron/reconcile-subscriptions/  # red de seguridad diaria (Vercel Cron)
 src/app/api/chat/route.ts          # agente conversacional (streaming)
 src/app/api/[transport]/route.ts   # servidor MCP remoto (endpoint público: /api/mcp)
-src/app/api/settings/credentials/  # CRUD de credenciales de integraciones (BYOK)
+src/app/api/settings/credentials/  # CRUD de credenciales (BYOK) + [provider]/connect|callback (OAuth)
 src/app/.well-known/               # metadata OAuth para clientes MCP (RFC 9728/8414)
 src/app/page.tsx, pricing/, dashboard/, dashboard/chat/, dashboard/settings/  # UI
 ```
@@ -83,6 +86,12 @@ Completá en `.env.local`:
 - `MP_ACCESS_TOKEN` / `MP_WEBHOOK_SECRET` (requerido para suscripciones — usá
   credenciales de sandbox de Mercado Pago mientras desarrollás).
 - `ML_ACCESS_TOKEN` (opcional, server-side, degrada con gracia).
+- `TIENDANUBE_CLIENT_ID`/`SECRET`, `MERCADOLIBRE_SELLER_CLIENT_ID`/`SECRET`
+  (opcionales — apps OAuth propias para que los usuarios conecten su tienda o
+  su cuenta vendedora; sin esto, esos dos providers simplemente no arrancan
+  el flujo de conexión).
+- `BUILTWITH_API_KEY` (opcional, server-side — registro gratuito en
+  builtwith.com, no BYOK).
 - `META_ADS_ACCESS_TOKEN` **ya no existe como env var** — cada usuario carga su
   propio token desde `/dashboard/settings` (ver sección BYOK más abajo).
 
@@ -111,32 +120,62 @@ Abrí http://localhost:3000.
   sin que el usuario cargue el suyo en `/dashboard/settings`, degrada con gracia
   igual que Mercado Libre.
 - El scoring es una **estimación explicable**, nunca una métrica de ventas/ROAS real.
+- **Similarweb**: evaluada y descartada — su API es enterprise-only
+  (~US$35.000/año+, sin plan individual), no viable como BYOK ni pagada por
+  nosotros en esta etapa. **Shopify** quedó explícitamente afuera del
+  alcance (se prioriza Tienda Nube).
 
 ## Credenciales por usuario (BYOK)
 
 Las integraciones de **datos** (no las de IA) se cargan por usuario desde
 `/dashboard/settings`, no como env var compartida — cada uno analiza con sus
-propias cuentas. Hoy la única es **Meta Ad Library**. `ML_ACCESS_TOKEN` queda
-excluido a propósito (sigue siendo server-side, compartido) y
-`ANTHROPIC_API_KEY` también (es de IA, no de integraciones de datos — el
-sistema de créditos/planes no se ve afectado por esto).
+propias cuentas. `ML_ACCESS_TOKEN` (búsqueda pública) queda excluido a
+propósito (sigue siendo server-side, compartido) y `ANTHROPIC_API_KEY`
+también (es de IA, no de integraciones de datos — el sistema de
+créditos/planes no se ve afectado por esto).
+
+Dos formas de credential (`authType` en `providers.ts`):
+- **`manual`** — el usuario pega un valor (**Meta Ad Library**). Se valida
+  contra la API real (`provider.verify()`) antes de guardar.
+- **`oauth`** — flujo de redirect + callback (**Tienda Nube**, **Mercado
+  Libre vendedor** — esta última es una integración DISTINTA de
+  `ML_ACCESS_TOKEN`, trae datos reales de la cuenta vendedora del usuario, no
+  la búsqueda pública). El `state` va firmado con HMAC (reusa
+  `CREDENTIALS_ENCRYPTION_KEY`, sin tabla de "authorization requests"
+  pendientes) y expira a los 10 minutos. Mercado Libre además refresca el
+  access token solo (dura 6hs; el refresh token dura 6 meses y es de un solo
+  uso — cada refresh persiste uno nuevo de inmediato).
 
 - `src/lib/credentials/crypto.ts` — AES-256-GCM con `CREDENTIALS_ENCRYPTION_KEY`.
-  Nunca se guarda un token en texto plano.
+  Nunca se guarda un token en texto plano (para OAuth, guarda el token set
+  completo: access/refresh token, expiración, id de cuenta externa).
 - `src/lib/credentials/providers.ts` — registro **extensible**: sumar una
   integración nueva es una entrada de código (`CREDENTIAL_PROVIDERS`), no una
   migración de schema (la tabla `UserCredential` es genérica: `provider` es
-  `String` libre, `encryptedValue` es un JSON cifrado de forma libre).
+  `String` libre, `encryptedValue` es un JSON cifrado de forma libre —
+  soporta tanto `{accessToken}` como un token set OAuth completo sin cambiar
+  el schema).
 - `src/lib/credentials/store.ts` — `get/set/delete/listUserCredentialStatus`.
-  `setUserCredential` valida contra `provider.verify()` (una consulta real a
-  la API del proveedor) **antes** de guardar — nunca persiste un token roto
-  sin avisar.
-- El token del usuario se resuelve en `gatherEvidence()`
-  (`src/lib/pipeline.ts`) y se pasa a `collectMetaAds(query, accessToken)` —
-  el collector ya no lee ningún env var. `list_sources` (chat/MCP) también
-  refleja el estado *del usuario que pregunta* para Meta, mezclado con el
-  estado del servidor para Mercado Libre — dos niveles distintos, documentado
-  en la descripción de esa tool para no confundir al agente que la llama.
+  `getUserCredential` refresca sola un token OAuth vencido (o por vencer)
+  antes de devolverlo. `setUserCredential` (solo providers `manual`) valida
+  con `provider.verify()` antes de guardar; `saveOAuthCredential` (solo la
+  usa el callback route) guarda directo — el propio intercambio OAuth exitoso
+  ya es la prueba de validez.
+- `src/app/api/settings/credentials/[provider]/connect|callback/` — inicia y
+  completa el handshake OAuth genérico (sirve para cualquier provider
+  `oauth` futuro, no solo estos dos).
+- **BuiltWith** (`src/lib/collectors/builtwith.ts`) es la excepción: es
+  gratis y no es dato personal del usuario, así que es server-side
+  (`BUILTWITH_API_KEY`), misma categoría que `ML_ACCESS_TOKEN` — no aparece
+  en `/dashboard/settings`.
+- **Fuera de alcance a propósito**: los datos de Tienda Nube/Mercado Libre
+  vendedor no se cruzan con el scoring de `analyze_product` todavía — hoy son
+  un snapshot standalone (tools `tienda_nube_snapshot`/
+  `mercadolibre_seller_snapshot`), no una señal más del motor de scoring.
+- `list_sources` (chat/MCP) mezcla dos niveles: Mercado Libre/Trends
+  reflejan la configuración del servidor, Meta Ad Library refleja el estado
+  *del usuario que pregunta* — documentado en la descripción de esa tool
+  para no confundir al agente que la llama.
 
 ## Billing
 
@@ -149,10 +188,11 @@ para el detalle de flujos (alta, renovación, cancelación, fallo de pago).
 ## Agente de chat y servidor MCP
 
 Ambas superficies comparten una única definición de tools en
-`src/lib/agent/tools.ts` (7 tools: `analyze_product`, `get_report`,
+`src/lib/agent/tools.ts` (10 tools: `analyze_product`, `get_report`,
 `list_reports`, `list_sources`, `compare_markets`, `generate_test_brief`,
-`search_products`). Sin gating de créditos por ahora — decisión de producto,
-ver riesgo de costo en el plan.
+`search_products`, `tienda_nube_snapshot`, `mercadolibre_seller_snapshot`,
+`lookup_tech_stack`). Sin gating de créditos por ahora — decisión de
+producto, ver riesgo de costo en el plan.
 
 **Costo: evidencia cruda, no narrativa propia.** `analyze_product`,
 `compare_markets` y cada candidato de `search_products` usan
@@ -208,3 +248,11 @@ juntos.
    de uso, solo con el techo de tokens por turno del chat como freno.
 4. Habilitar la app OAuth de MCP en el dashboard de Clerk (Configure →
    MCP/OAuth Applications) para poder conectar un cliente MCP externo de verdad.
+5. Registrar la app de Tienda Nube (dev.tiendanube.com, partner + app
+   "independiente", sin NubeSDK) y la de Mercado Libre vendedor
+   (developers.mercadolibre.com.ar) con sus redirect URIs apuntando a
+   `/api/settings/credentials/{provider}/callback`, y probar el flujo OAuth
+   completo — no se probó en runtime real en esta sesión (no hay apps
+   registradas todavía).
+6. Conseguir una `BUILTWITH_API_KEY` gratuita y probar `lookup_tech_stack`
+   contra un dominio real.

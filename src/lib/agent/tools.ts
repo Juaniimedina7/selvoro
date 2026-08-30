@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { gatherEvidence } from "@/lib/pipeline";
 import { getSourceStatuses } from "@/lib/collectors/sourceStatus";
+import { getTiendaNubeSnapshot } from "@/lib/collectors/tiendanube-store";
+import { getMercadoLibreSellerSnapshot } from "@/lib/collectors/mercadolibre-seller";
+import { lookupTechStack } from "@/lib/collectors/builtwith";
 import { compareMarkets } from "@/lib/report/compareMarkets";
 import { generateTestBrief } from "@/lib/report/generateTestBrief";
 import { searchProducts, DEFAULT_MAX_CANDIDATES, HARD_MAX_CANDIDATES } from "@/lib/discovery/searchProducts";
 import { getReportPayload, listReports } from "@/lib/reports/queries";
+import { getUserCredential } from "@/lib/credentials/store";
 import type { AnalysisEvidence } from "@/lib/types";
 
 // Definición única de las tools de Selvoro. Dos adaptadores las consumen:
@@ -181,6 +185,47 @@ const searchProductsTool: ToolDef<z.infer<typeof searchProductsSchema>> = {
   },
 };
 
+const tiendaNubeSnapshotSchema = z.object({});
+
+const tiendaNubeSnapshotTool: ToolDef<z.infer<typeof tiendaNubeSnapshotSchema>> = {
+  name: "tienda_nube_snapshot",
+  title: "Estado de mi tienda (Tienda Nube)",
+  description:
+    "Trae datos reales (no proxies) de la tienda de Tienda Nube que el usuario conectó en Configuración → Integraciones: nombre, cantidad de productos, pedidos recientes. Si no conectó ninguna, lo indica explícitamente.",
+  schema: tiendaNubeSnapshotSchema,
+  handler: async (ctx) => {
+    const cred = await getUserCredential(ctx.clerkUserId, "tienda_nube");
+    return getTiendaNubeSnapshot(cred?.accessToken, cred?.externalAccountId);
+  },
+};
+
+const mercadoLibreSellerSnapshotSchema = z.object({});
+
+const mercadoLibreSellerSnapshotTool: ToolDef<z.infer<typeof mercadoLibreSellerSnapshotSchema>> = {
+  name: "mercadolibre_seller_snapshot",
+  title: "Estado de mi cuenta vendedora (Mercado Libre)",
+  description:
+    "Trae datos reales (no proxies) de la cuenta vendedora de Mercado Libre que el usuario conectó en Configuración → Integraciones: nickname, cantidad de publicaciones activas. Distinto de analyze_product (que usa la búsqueda pública). Si no conectó ninguna, lo indica explícitamente.",
+  schema: mercadoLibreSellerSnapshotSchema,
+  handler: async (ctx) => {
+    const cred = await getUserCredential(ctx.clerkUserId, "mercadolibre_seller");
+    return getMercadoLibreSellerSnapshot(cred?.accessToken, cred?.externalAccountId);
+  },
+};
+
+const lookupTechStackSchema = z.object({
+  domain: z.string().min(3).describe("Dominio a inspeccionar, ej. 'competidor.com' (sin https://)."),
+});
+
+const lookupTechStackTool: ToolDef<z.infer<typeof lookupTechStackSchema>> = {
+  name: "lookup_tech_stack",
+  title: "Stack tecnológico de un dominio",
+  description:
+    "Detecta qué tecnologías usa la tienda/sitio de un dominio (ej. si corre en Tienda Nube, Shopify, WooCommerce) vía BuiltWith. Server-side, no depende de credenciales del usuario. Señal de sofisticación/inversión del competidor, no una métrica de ventas.",
+  schema: lookupTechStackSchema,
+  handler: async (_ctx, input) => lookupTechStack(input.domain),
+};
+
 export const AGENT_TOOLS: ToolDef<unknown>[] = [
   analyzeProduct,
   getReport,
@@ -189,4 +234,7 @@ export const AGENT_TOOLS: ToolDef<unknown>[] = [
   compareMarketsTool,
   generateTestBriefTool,
   searchProductsTool,
+  tiendaNubeSnapshotTool,
+  mercadoLibreSellerSnapshotTool,
+  lookupTechStackTool,
 ] as unknown as ToolDef<unknown>[];

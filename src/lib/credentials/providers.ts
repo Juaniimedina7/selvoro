@@ -1,10 +1,18 @@
 import { verifyMetaAdsAccessToken } from "@/lib/collectors/meta-ads";
+import { tiendaNubeProvider } from "@/lib/credentials/oauth/tiendaNube";
+import { mercadoLibreSellerProvider } from "@/lib/credentials/oauth/mercadoLibreSeller";
 
 // Registro extensible de integraciones que un usuario puede cargar desde
 // Configuración → Integraciones. NUNCA incluye credenciales de IA
 // (ANTHROPIC_API_KEY sigue siendo del servidor) ni ML_ACCESS_TOKEN (excluido
-// a propósito, sigue compartido). Sumar una integración nueva es agregar una
-// entrada acá, sin tocar el schema de DB (ver UserCredential.provider).
+// a propósito, sigue compartido — es una integración DISTINTA de
+// mercadolibre_seller). Sumar una integración nueva es agregar una entrada
+// acá, sin tocar el schema de DB (ver UserCredential.provider).
+//
+// Dos formas de provider:
+// - "manual": el usuario pega un valor (hoy: Meta Ad Library).
+// - "oauth": flujo de redirect+callback (hoy: Tienda Nube, Mercado Libre
+//   vendedor). Ver src/app/api/settings/credentials/[provider]/connect|callback.
 
 export interface CredentialField {
   key: string;
@@ -12,7 +20,19 @@ export interface CredentialField {
   placeholder?: string;
 }
 
-export interface CredentialProvider {
+export interface OAuthTokenSet {
+  accessToken: string;
+  refreshToken?: string;
+  /** ISO 8601. Si el provider no expira (ej. Tienda Nube), queda undefined. */
+  expiresAt?: string;
+  /** Nombre de tienda / nickname del vendedor, para mostrar en la UI sin descifrar de nuevo. */
+  accountLabel?: string;
+  /** store_id / seller user_id — lo piden casi todos los endpoints posteriores. */
+  externalAccountId?: string;
+}
+
+export interface ManualCredentialProvider {
+  authType: "manual";
   id: string;
   label: string;
   description: string;
@@ -22,7 +42,21 @@ export interface CredentialProvider {
   verify: (value: Record<string, string>) => Promise<{ ok: boolean; message: string }>;
 }
 
-const metaAdsProvider: CredentialProvider = {
+export interface OAuthCredentialProvider {
+  authType: "oauth";
+  id: string;
+  label: string;
+  description: string;
+  helpUrl: string;
+  authorizeUrl: (state: string, redirectUri: string) => string;
+  exchangeCode: (code: string, redirectUri: string) => Promise<OAuthTokenSet>;
+  refresh?: (refreshToken: string) => Promise<OAuthTokenSet>;
+}
+
+export type CredentialProvider = ManualCredentialProvider | OAuthCredentialProvider;
+
+const metaAdsProvider: ManualCredentialProvider = {
+  authType: "manual",
   id: "meta_ads",
   label: "Meta Ad Library",
   description:
@@ -36,7 +70,11 @@ const metaAdsProvider: CredentialProvider = {
   },
 };
 
-export const CREDENTIAL_PROVIDERS: CredentialProvider[] = [metaAdsProvider];
+export const CREDENTIAL_PROVIDERS: CredentialProvider[] = [
+  metaAdsProvider,
+  tiendaNubeProvider,
+  mercadoLibreSellerProvider,
+];
 
 export function getCredentialProvider(id: string): CredentialProvider | undefined {
   return CREDENTIAL_PROVIDERS.find((p) => p.id === id);

@@ -6,6 +6,7 @@ import type { CredentialField } from "@/lib/credentials/providers";
 
 export interface IntegrationItem {
   providerId: string;
+  authType: "manual" | "oauth";
   label: string;
   description: string;
   helpUrl: string;
@@ -37,6 +38,7 @@ export function IntegrationsList({ initial }: { initial: IntegrationItem[] }) {
         <IntegrationCard
           key={item.providerId}
           providerId={item.providerId}
+          authType={item.authType}
           label={item.label}
           description={item.description}
           helpUrl={item.helpUrl}

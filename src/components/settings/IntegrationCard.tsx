@@ -5,6 +5,7 @@ import type { CredentialField } from "@/lib/credentials/providers";
 
 export interface IntegrationCardProps {
   providerId: string;
+  authType: "manual" | "oauth";
   label: string;
   description: string;
   helpUrl: string;
@@ -16,6 +17,7 @@ export interface IntegrationCardProps {
 
 export function IntegrationCard({
   providerId,
+  authType,
   label,
   description,
   helpUrl,
@@ -112,53 +114,70 @@ export function IntegrationCard({
         </span>
       </div>
 
-      {configured && !editing && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ fontSize: 13, color: "var(--muted)", fontFamily: "monospace" }}>{maskedPreview}</span>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setEditing(true)} style={secondaryBtn}>
-              Actualizar
-            </button>
+      {authType === "oauth" ? (
+        configured ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>{maskedPreview}</span>
             <button onClick={handleDelete} disabled={loading} style={dangerBtn}>
-              {loading ? "…" : "Eliminar"}
+              {loading ? "…" : "Desconectar"}
             </button>
           </div>
-        </div>
-      )}
+        ) : (
+          <a href={`/api/settings/credentials/${providerId}/connect`} style={primaryLinkBtn}>
+            Conectar con {label}
+          </a>
+        )
+      ) : (
+        <>
+          {configured && !editing && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <span style={{ fontSize: 13, color: "var(--muted)", fontFamily: "monospace" }}>{maskedPreview}</span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setEditing(true)} style={secondaryBtn}>
+                  Actualizar
+                </button>
+                <button onClick={handleDelete} disabled={loading} style={dangerBtn}>
+                  {loading ? "…" : "Eliminar"}
+                </button>
+              </div>
+            </div>
+          )}
 
-      {(!configured || editing) && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {fields.map((f) => (
-            <label key={f.key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>{f.label}</span>
-              <input
-                type="password"
-                value={values[f.key] ?? ""}
-                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                placeholder={f.placeholder}
-                style={{
-                  background: "var(--surface-2)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: "9px 12px",
-                  color: "var(--text)",
-                  fontSize: 13.5,
-                  outline: "none",
-                }}
-              />
-            </label>
-          ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-            <button onClick={handleSave} disabled={loading} style={primaryBtn}>
-              {loading ? "Validando…" : "Probar y guardar"}
-            </button>
-            {editing && (
-              <button onClick={() => setEditing(false)} disabled={loading} style={secondaryBtn}>
-                Cancelar
-              </button>
-            )}
-          </div>
-        </div>
+          {(!configured || editing) && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {fields.map((f) => (
+                <label key={f.key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{f.label}</span>
+                  <input
+                    type="password"
+                    value={values[f.key] ?? ""}
+                    onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                    placeholder={f.placeholder}
+                    style={{
+                      background: "var(--surface-2)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      padding: "9px 12px",
+                      color: "var(--text)",
+                      fontSize: 13.5,
+                      outline: "none",
+                    }}
+                  />
+                </label>
+              ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <button onClick={handleSave} disabled={loading} style={primaryBtn}>
+                  {loading ? "Validando…" : "Probar y guardar"}
+                </button>
+                {editing && (
+                  <button onClick={() => setEditing(false)} disabled={loading} style={secondaryBtn}>
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {error && <p style={{ color: "var(--accent-red)", fontSize: 12.5, margin: 0 }}>{error}</p>}
@@ -175,6 +194,14 @@ const primaryBtn: React.CSSProperties = {
   borderRadius: 8,
   padding: "8px 14px",
   cursor: "pointer",
+};
+
+const primaryLinkBtn: React.CSSProperties = {
+  ...primaryBtn,
+  display: "inline-block",
+  textAlign: "center",
+  textDecoration: "none",
+  width: "fit-content",
 };
 
 const secondaryBtn: React.CSSProperties = {
