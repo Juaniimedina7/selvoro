@@ -82,6 +82,9 @@ export const mercadoLibreSellerProvider: OAuthCredentialProvider = {
       client_id: clientId ?? "",
       redirect_uri: redirectUri,
       state,
+      // offline_access es obligatorio para que ML devuelva refresh_token
+      // (si no, el access token de 6hs no se puede renovar solo).
+      scope: "offline_access read",
     });
     return `${AUTH_BASE}?${params.toString()}`;
   },
