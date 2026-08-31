@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { verifyClerkToken } from "@clerk/mcp-tools/next";
 import { AGENT_TOOLS, type ToolContext } from "@/lib/agent/tools";
 
-// Servidor MCP remoto de Selvoro. Expone las mismas 7 tools que usa el chat
+// Servidor MCP remoto de Selvoro. Expone las mismas 13 tools que usa el chat
 // web (src/lib/agent/tools.ts), autenticado vía OAuth de Clerk — el cliente
 // MCP (Claude Desktop, Claude.ai, etc.) completa el consentimiento de Clerk y
 // las tools reciben el mismo clerkUserId que usa todo src/lib/ (sin tabla de
@@ -27,7 +27,7 @@ const mcpHandler = createMcpHandler(
             };
           }
 
-          const ctx: ToolContext = { clerkUserId };
+          const ctx: ToolContext = { clerkUserId, source: "mcp" };
           try {
             const result = await tool.handler(ctx, input);
             return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };

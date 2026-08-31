@@ -1,10 +1,16 @@
 import type { OAuthCredentialProvider, OAuthTokenSet } from "@/lib/credentials/providers";
 
-// OAuth de Mercado Libre para que el usuario conecte SU cuenta vendedora
-// (distinto de ML_ACCESS_TOKEN, que sigue siendo server-side para la
-// búsqueda pública). access_token dura 6hs (21600s); refresh_token dura 6
-// meses y es de UN SOLO USO — cada refresh devuelve uno nuevo que hay que
-// persistir de inmediato, el anterior queda inválido.
+// OAuth de Mercado Libre para que el usuario conecte SU cuenta de ML —
+// NO hace falta que sea una cuenta vendedora/con tienda activa: cualquier
+// cuenta de ML sirve, porque ML dejó de aceptar /sites/{site}/search sin un
+// access token ligado a un usuario real (confirmado: un token app-only vía
+// client_credentials es rechazado por ese endpoint, HTTP 403). Este mismo
+// credential alimenta tanto mercadolibre_seller_snapshot (publicaciones
+// propias, si las hay) como el fallback de collectMercadoLibre cuando no hay
+// ML_ACCESS_TOKEN de servidor (ver src/lib/pipeline.ts). access_token dura
+// 6hs (21600s); refresh_token dura 6 meses y es de UN SOLO USO — cada
+// refresh devuelve uno nuevo que hay que persistir de inmediato, el
+// anterior queda inválido.
 
 const AUTH_BASE = "https://auth.mercadolibre.com.ar/authorization";
 const TOKEN_URL = "https://api.mercadolibre.com/oauth/token";
@@ -71,9 +77,9 @@ async function requestToken(body: Record<string, string>): Promise<OAuthTokenSet
 export const mercadoLibreSellerProvider: OAuthCredentialProvider = {
   authType: "oauth",
   id: "mercadolibre_seller",
-  label: "Mercado Libre (vendedor)",
+  label: "Mercado Libre",
   description:
-    "Conectá tu cuenta vendedora para traer tus propias publicaciones y visitas — distinto del acceso público que ya usa Selvoro para buscar en Mercado Libre.",
+    "Conectá cualquier cuenta de Mercado Libre (no hace falta que tengas tienda ni publicaciones activas) — Mercado Libre exige un login real para poder buscar, así que esto también habilita la búsqueda pública que usa analyze_product cuando no hay un token de servidor configurado. Si además vendés, trae tus propias publicaciones.",
   helpUrl: "https://developers.mercadolibre.com.ar/es_ar/autenticacion-y-autorizacion",
   authorizeUrl: (state, redirectUri) => {
     const clientId = process.env.MERCADOLIBRE_SELLER_CLIENT_ID;

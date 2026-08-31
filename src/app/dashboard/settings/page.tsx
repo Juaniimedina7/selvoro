@@ -33,8 +33,10 @@ export default async function SettingsPage({
       <p style={{ color: "var(--muted)", fontSize: 13.5, margin: "0 0 20px" }}>
         Cargá tus propias credenciales para las fuentes de datos que lo
         soportan. Se guardan cifradas y solo se usan en tus propios análisis
-        (formulario, chat y MCP). Mercado Libre (búsqueda pública) y el LLM
-        del reporte siguen siendo compartidos, no configurables acá.
+        (formulario, chat y MCP). El LLM del reporte sigue siendo compartido,
+        no configurable acá. Mercado Libre no acepta búsquedas sin login: si
+        no hay un token de servidor cargado, conectar tu cuenta acá abajo
+        también habilita esa fuente para vos.
       </p>
       {connected && (
         <p

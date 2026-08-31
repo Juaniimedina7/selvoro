@@ -7,8 +7,20 @@ interface ChatMessage {
   content: string;
 }
 
-export function ChatWindow() {
+interface ConversationSummary {
+  id: string;
+  title: string | null;
+  updatedAt: string;
+}
+
+interface ChatWindowProps {
+  initialConversations: ConversationSummary[];
+}
+
+export function ChatWindow({ initialConversations }: ChatWindowProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[]>(initialConversations);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,6 +30,40 @@ export function ChatWindow() {
     requestAnimationFrame(() => {
       listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
     });
+  }
+
+  async function refreshConversations() {
+    try {
+      const res = await fetch("/api/conversations");
+      if (res.ok) setConversations(await res.json());
+    } catch {
+      // best-effort, no bloquea el chat
+    }
+  }
+
+  function startNewConversation() {
+    setMessages([]);
+    setConversationId(null);
+    setInput("");
+    setError(null);
+  }
+
+  async function openConversation(id: string) {
+    if (loading) return;
+    setError(null);
+    try {
+      const res = await fetch(`/api/conversations/${id}`);
+      if (!res.ok) {
+        setError("No se pudo abrir esa conversación.");
+        return;
+      }
+      const data = (await res.json()) as { id: string; messages: ChatMessage[] };
+      setMessages(data.messages);
+      setConversationId(data.id);
+      scrollToBottom();
+    } catch {
+      setError("No se pudo conectar con el servidor.");
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -36,7 +82,7 @@ export function ChatWindow() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages }),
+        body: JSON.stringify({ messages: nextMessages, conversationId }),
       });
 
       if (!res.ok || !res.body) {
@@ -44,6 +90,10 @@ export function ChatWindow() {
         setLoading(false);
         return;
       }
+
+      const returnedId = res.headers.get("X-Conversation-Id");
+      const isNewConversation = returnedId && returnedId !== conversationId;
+      if (returnedId) setConversationId(returnedId);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -56,6 +106,8 @@ export function ChatWindow() {
         setMessages([...nextMessages, { role: "assistant", content: assistantText }]);
         scrollToBottom();
       }
+
+      if (isNewConversation) await refreshConversations();
     } catch {
       setError("No se pudo conectar con el servidor.");
     } finally {
@@ -64,101 +116,160 @@ export function ChatWindow() {
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "70vh",
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 14,
-      }}
-    >
+    <div style={{ display: "flex", gap: 16, height: "70vh" }}>
       <div
-        ref={listRef}
         style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: 20,
+          width: 200,
+          flexShrink: 0,
           display: "flex",
           flexDirection: "column",
-          gap: 14,
+          gap: 8,
+          overflowY: "auto",
         }}
       >
-        {messages.length === 0 && (
-          <p style={{ color: "var(--muted)", fontSize: 13.5, margin: 0 }}>
-            Pedime cosas como &quot;analizame un masajeador cervical para
-            Argentina&quot; o &quot;buscame 5 productos de hogar en
-            crecimiento&quot;.
+        <button
+          type="button"
+          onClick={startNewConversation}
+          style={{
+            background: "var(--accent)",
+            color: "var(--on-accent)",
+            fontWeight: 700,
+            fontSize: 13,
+            border: "none",
+            borderRadius: 10,
+            padding: "10px 12px",
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          + Nueva conversación
+        </button>
+        {conversations.length === 0 && (
+          <p style={{ color: "var(--muted)", fontSize: 12, margin: "4px 2px" }}>
+            Sin conversaciones guardadas todavía.
           </p>
         )}
-        {messages.map((m, i) => (
-          <div
-            key={i}
+        {conversations.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => openConversation(c.id)}
             style={{
-              alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-              maxWidth: "85%",
-              background: m.role === "user" ? "var(--accent)" : "var(--surface-2)",
-              color: m.role === "user" ? "var(--on-accent)" : "var(--text)",
-              border: m.role === "user" ? "none" : "1px solid var(--border)",
-              borderRadius: 12,
-              padding: "10px 14px",
-              fontSize: 14,
-              lineHeight: 1.55,
-              whiteSpace: "pre-wrap",
+              background: c.id === conversationId ? "var(--surface-2)" : "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: "9px 11px",
+              fontSize: 12.5,
+              color: "var(--text)",
+              textAlign: "left",
+              cursor: "pointer",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
-            {m.content || (loading && i === messages.length - 1 ? "…" : "")}
-          </div>
+            {c.title || "Sin título"}
+          </button>
         ))}
       </div>
 
-      {error && (
-        <p style={{ color: "var(--accent-red)", fontSize: 12.5, margin: "0 16px 8px" }}>{error}</p>
-      )}
-
-      <form
-        onSubmit={handleSubmit}
+      <div
         style={{
+          flex: 1,
           display: "flex",
-          gap: 8,
-          padding: 14,
-          borderTop: "1px solid var(--border)",
+          flexDirection: "column",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: 14,
+          minWidth: 0,
         }}
       >
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Escribí tu consulta…"
-          disabled={loading}
+        <div
+          ref={listRef}
           style={{
             flex: 1,
-            background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            padding: "11px 14px",
-            color: "var(--text)",
-            fontSize: 14.5,
-            outline: "none",
-          }}
-        />
-        <button
-          type="submit"
-          disabled={loading || !input.trim()}
-          style={{
-            background: loading ? "var(--surface-2)" : "var(--accent)",
-            color: loading ? "var(--muted)" : "var(--on-accent)",
-            fontWeight: 700,
-            fontSize: 14,
-            border: "none",
-            borderRadius: 10,
-            padding: "0 18px",
-            cursor: loading ? "wait" : "pointer",
+            overflowY: "auto",
+            padding: 20,
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
           }}
         >
-          {loading ? "…" : "Enviar"}
-        </button>
-      </form>
+          {messages.length === 0 && (
+            <p style={{ color: "var(--muted)", fontSize: 13.5, margin: 0 }}>
+              Pedime cosas como &quot;analizame un masajeador cervical para
+              Argentina&quot; o &quot;buscame 5 productos de hogar en
+              crecimiento&quot;.
+            </p>
+          )}
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              style={{
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                maxWidth: "85%",
+                background: m.role === "user" ? "var(--accent)" : "var(--surface-2)",
+                color: m.role === "user" ? "var(--on-accent)" : "var(--text)",
+                border: m.role === "user" ? "none" : "1px solid var(--border)",
+                borderRadius: 12,
+                padding: "10px 14px",
+                fontSize: 14,
+                lineHeight: 1.55,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {m.content || (loading && i === messages.length - 1 ? "…" : "")}
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <p style={{ color: "var(--accent-red)", fontSize: 12.5, margin: "0 16px 8px" }}>{error}</p>
+        )}
+
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: 14,
+            borderTop: "1px solid var(--border)",
+          }}
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Escribí tu consulta…"
+            disabled={loading}
+            style={{
+              flex: 1,
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: "11px 14px",
+              color: "var(--text)",
+              fontSize: 14.5,
+              outline: "none",
+            }}
+          />
+          <button
+            type="submit"
+            disabled={loading || !input.trim()}
+            style={{
+              background: loading ? "var(--surface-2)" : "var(--accent)",
+              color: loading ? "var(--muted)" : "var(--on-accent)",
+              fontWeight: 700,
+              fontSize: 14,
+              border: "none",
+              borderRadius: 10,
+              padding: "0 18px",
+              cursor: loading ? "wait" : "pointer",
+            }}
+          >
+            {loading ? "…" : "Enviar"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

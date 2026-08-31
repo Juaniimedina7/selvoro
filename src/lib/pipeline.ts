@@ -57,14 +57,21 @@ export async function gatherEvidence(
 ): Promise<AnalysisEvidence> {
   // Meta Ad Library es BYOK (credential por usuario, ver src/lib/credentials/).
   // Sin usuario o sin credential cargado, el collector degrada con gracia.
-  const metaAdsCredential = opts?.clerkUserId
-    ? await getUserCredential(opts.clerkUserId, "meta_ads")
-    : null;
+  // Mercado Libre: ML dejó de aceptar búsquedas anónimas (403 sin token) — si
+  // no hay ML_ACCESS_TOKEN de servidor, usamos el access token que el usuario
+  // conectó como vendedor de ML (mismo BYOK que ya existe para
+  // mercadolibre_seller_snapshot), así el collector funciona igual.
+  const [metaAdsCredential, mlSellerCredential] = opts?.clerkUserId
+    ? await Promise.all([
+        getUserCredential(opts.clerkUserId, "meta_ads"),
+        getUserCredential(opts.clerkUserId, "mercadolibre_seller"),
+      ])
+    : [null, null];
 
   // 1. Recolección en paralelo (cada collector degrada con gracia).
   //    input.market es el mercado LOCAL; US se usa siempre como referencia.
   const [mlResult, trendsResult, metaAdsResult] = await Promise.all([
-    collectMercadoLibre(input.query, input.market),
+    collectMercadoLibre(input.query, input.market, mlSellerCredential?.accessToken),
     collectTrends(input.query, input.market, input.dateFrom, input.dateTo),
     collectMetaAds(
       input.query,

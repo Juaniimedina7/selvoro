@@ -2,7 +2,14 @@ import type { CountryCode } from "@/lib/taxonomy/niches";
 import type { CollectorResult, MercadoLibreData, Signal } from "@/lib/types";
 
 // Collector de Mercado Libre. Ancla local del MVP (precio, competencia, listings).
-// Usa la API oficial. Si ML exige autenticación y no hay token, degrada con gracia
+// Usa la API oficial. ML dejó de aceptar búsquedas anónimas: /sites/{site}/search
+// devuelve 403 sin un access token válido (confirmado en vivo, no es un bug
+// nuestro ni un bloqueo por User-Agent). Por eso el token ya no es "opcional":
+// preferimos ML_ACCESS_TOKEN (server-wide, si está cargado), y si no,
+// usamos el access token que el usuario conectó vía OAuth en mercadolibre_seller
+// (mismo patrón BYOK que meta-ads.ts) — así el collector funciona para
+// cualquier usuario que haya conectado su propia cuenta, sin depender de un
+// único token compartido. Si no hay ninguno de los dos, degrada con gracia
 // en vez de romper el pipeline (ver plan §8 y §13: "sin datos" != "sin competencia").
 
 const ML_API = "https://api.mercadolibre.com";
@@ -42,11 +49,15 @@ function median(nums: number[]): number | null {
 export async function collectMercadoLibre(
   query: string,
   country: CountryCode = "AR",
+  userAccessToken?: string,
 ): Promise<CollectorResult> {
   const source = "Mercado Libre API";
   // Site por país; si no está mapeado (US, ES) usamos ML_SITE_ID o degradamos.
   const site = ML_SITE_BY_COUNTRY[country] ?? process.env.ML_SITE_ID;
-  const token = process.env.ML_ACCESS_TOKEN?.trim();
+  // Server-wide primero (cubre a todos los usuarios sin que nadie tenga que
+  // conectar nada); si no está configurado, el access token que el usuario
+  // conectó como vendedor de ML (BYOK) sirve igual para autenticar la búsqueda.
+  const token = process.env.ML_ACCESS_TOKEN?.trim() || userAccessToken?.trim();
 
   const degraded = (note: string, error?: string): CollectorResult => {
     const data: MercadoLibreData = {
@@ -95,7 +106,9 @@ export async function collectMercadoLibre(
 
   if (res.status === 401 || res.status === 403) {
     return degraded(
-      "La API de Mercado Libre requiere autenticación. Registrá una app y completá ML_ACCESS_TOKEN para habilitar precio y competencia local.",
+      token
+        ? "El access token de Mercado Libre fue rechazado (vencido o inválido)."
+        : "Mercado Libre requiere autenticación para buscar. Conectá tu cuenta de Mercado Libre en Configuración → Integraciones, o cargá ML_ACCESS_TOKEN en el servidor.",
       `HTTP ${res.status}`,
     );
   }

@@ -4,11 +4,11 @@ import { auth } from "@clerk/nextjs/server";
 import { AnalyzeForm } from "@/components/AnalyzeForm";
 
 const DATA_SOURCES = [
-  { label: "Mercado Libre", tag: "pública", desc: "Precios, competidores y volumen de publicaciones en tiempo real." },
+  { label: "Mercado Libre", tag: "pública", desc: "Precios, competidores y volumen de publicaciones en tiempo real (requiere una cuenta de Mercado Libre conectada, no hace falta que tengas tienda)." },
   { label: "Google Trends", tag: "pública", desc: "Tendencia de búsqueda comparada entre Argentina y Estados Unidos." },
   { label: "Meta Ad Library", tag: "pública", desc: "Anuncios activos, antigüedad y cantidad de anunciantes distintos." },
   { label: "Tienda Nube", tag: "tu cuenta", desc: "Productos y pedidos reales de tu propia tienda, no proxies." },
-  { label: "Mercado Libre vendedor", tag: "tu cuenta", desc: "Tus publicaciones activas reales, distinto de la búsqueda pública." },
+  { label: "Mercado Libre (tu cuenta)", tag: "tu cuenta", desc: "Tus publicaciones activas reales, si vendés — la misma conexión habilita la búsqueda pública de arriba." },
   { label: "BuiltWith", tag: "pública", desc: "El stack tecnológico de la tienda de un competidor puntual." },
 ];
 

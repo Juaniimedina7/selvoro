@@ -32,7 +32,7 @@ export function createChatToolRunner(
   clerkUserId: string,
   messages: Anthropic.Beta.BetaMessageParam[],
 ) {
-  const ctx: ToolContext = { clerkUserId };
+  const ctx: ToolContext = { clerkUserId, source: "chat" };
   const tools = AGENT_TOOLS.map((tool) =>
     betaZodTool({
       name: tool.name,

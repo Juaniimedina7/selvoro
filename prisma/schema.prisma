@@ -126,3 +126,54 @@ model WebhookEvent {
   processedAt DateTime?
   createdAt   DateTime      @default(now())
 }
+
+enum AgentRunKind {
+  ANALYZE
+  COMPARE
+  SEARCH
+}
+
+enum AgentRunSource {
+  CHAT
+  MCP
+}
+
+/// Persiste analyze_product / compare_markets / search_products disparados
+/// desde el chat o el MCP (Report solo guarda corridas del formulario web,
+/// con narrativa). payload guarda el objeto de dominio completo según kind:
+/// AnalysisEvidence (ANALYZE), MarketComparison (COMPARE) o
+/// SearchProductsResult sin resumir (SEARCH). verdict/confidence/compositeScore
+/// quedan null para COMPARE; para SEARCH se denormaliza el mejor candidato.
+model AgentRun {
+  id             String         @id @default(cuid())
+  clerkUserId    String
+  kind           AgentRunKind
+  source         AgentRunSource
+  query          String
+  market         String?
+  ticketUsd      Decimal?       @db.Decimal(10, 2)
+  verdict        String?
+  confidence     String?
+  compositeScore Int?
+  payload        Json
+  createdAt      DateTime       @default(now())
+
+  @@index([clerkUserId, createdAt])
+}
+
+/// Conversaciones de chat multi-hilo. messages guarda el array completo
+/// {role, content}[] tal como lo maneja ChatWindow.tsx — un solo Json,
+/// mismo criterio que Report.payload. No se normaliza a una tabla de
+/// mensajes: el cliente ya reenvía el array completo en cada POST, y el
+/// volumen esperado (chat personal, no message board) no justifica el
+/// costo de una tabla hija.
+model Conversation {
+  id          String   @id @default(cuid())
+  clerkUserId String
+  title       String?
+  messages    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([clerkUserId, updatedAt])
+}

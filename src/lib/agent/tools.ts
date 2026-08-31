@@ -4,12 +4,17 @@ import { getSourceStatuses } from "@/lib/collectors/sourceStatus";
 import { getTiendaNubeSnapshot } from "@/lib/collectors/tiendanube-store";
 import { getMercadoLibreSellerSnapshot } from "@/lib/collectors/mercadolibre-seller";
 import { lookupTechStack } from "@/lib/collectors/builtwith";
+import { collectMetaAds } from "@/lib/collectors/meta-ads";
+import type { MetaAdsData } from "@/lib/types";
 import { compareMarkets } from "@/lib/report/compareMarkets";
 import { generateTestBrief } from "@/lib/report/generateTestBrief";
 import { searchProducts, DEFAULT_MAX_CANDIDATES, HARD_MAX_CANDIDATES } from "@/lib/discovery/searchProducts";
 import { getReportPayload, listReports } from "@/lib/reports/queries";
+import { listAgentRuns, getAgentRunPayload } from "@/lib/agentRuns/queries";
+import { persistAgentRun } from "@/lib/agentRuns/persist";
 import { getUserCredential } from "@/lib/credentials/store";
 import type { AnalysisEvidence } from "@/lib/types";
+import type { AgentRunKind } from "@prisma/client";
 
 // Definición única de las tools de Selvoro. Dos adaptadores las consumen:
 // - src/lib/agent/chat.ts (Tool Runner de Anthropic, vía betaZodTool)
@@ -28,6 +33,7 @@ import type { AnalysisEvidence } from "@/lib/types";
 
 export interface ToolContext {
   clerkUserId: string;
+  source: "chat" | "mcp";
 }
 
 export interface ToolDef<TInput> {
@@ -93,6 +99,18 @@ const analyzeProduct: ToolDef<z.infer<typeof analyzeProductSchema>> = {
       },
       { clerkUserId: ctx.clerkUserId },
     );
+    await persistAgentRun({
+      clerkUserId: ctx.clerkUserId,
+      source: ctx.source,
+      kind: "ANALYZE",
+      query: input.query,
+      market: input.market ?? "AR",
+      ticketUsd: input.ticketUsd ?? null,
+      verdict: evidence.verdict,
+      confidence: evidence.confidence,
+      compositeScore: evidence.score.composite,
+      payload: evidence,
+    });
     return summarizeEvidence(evidence);
   },
 };
@@ -146,11 +164,21 @@ const compareMarketsTool: ToolDef<z.infer<typeof compareMarketsSchema>> = {
   description:
     "Compara tendencia de búsqueda y anuncios activos de Meta entre Argentina y Estados Unidos para un producto. Solo soporta AR vs US (los collectors no soportan otros pares de mercado todavía). Evidencia cruda, sin narrativa propia.",
   schema: compareMarketsSchema,
-  handler: async (ctx, input) =>
-    compareMarkets(
+  handler: async (ctx, input) => {
+    const comparison = await compareMarkets(
       { query: input.query, market: input.market ?? "AR" },
       { clerkUserId: ctx.clerkUserId },
-    ),
+    );
+    await persistAgentRun({
+      clerkUserId: ctx.clerkUserId,
+      source: ctx.source,
+      kind: "COMPARE",
+      query: input.query,
+      market: input.market ?? "AR",
+      payload: comparison,
+    });
+    return comparison;
+  },
 };
 
 const generateTestBriefSchema = z.object({
@@ -202,6 +230,18 @@ const searchProductsTool: ToolDef<z.infer<typeof searchProductsSchema>> = {
       country: input.country,
       nicheId: input.niche,
     });
+    const best = results[0]; // ya vienen ordenados desc por score.composite
+    await persistAgentRun({
+      clerkUserId: ctx.clerkUserId,
+      source: ctx.source,
+      kind: "SEARCH",
+      query: criteria,
+      market: input.country ?? "AR",
+      verdict: best?.evidence.verdict ?? null,
+      confidence: best?.evidence.confidence ?? null,
+      compositeScore: best?.evidence.score.composite ?? null,
+      payload: { criteria, note, results },
+    });
     return {
       criteria,
       note,
@@ -228,9 +268,9 @@ const mercadoLibreSellerSnapshotSchema = z.object({});
 
 const mercadoLibreSellerSnapshotTool: ToolDef<z.infer<typeof mercadoLibreSellerSnapshotSchema>> = {
   name: "mercadolibre_seller_snapshot",
-  title: "Estado de mi cuenta vendedora (Mercado Libre)",
+  title: "Estado de mi cuenta de Mercado Libre",
   description:
-    "Trae datos reales (no proxies) de la cuenta vendedora de Mercado Libre que el usuario conectó en Configuración → Integraciones: nickname, cantidad de publicaciones activas. Distinto de analyze_product (que usa la búsqueda pública). Si no conectó ninguna, lo indica explícitamente.",
+    "Trae datos reales (no proxies) de la cuenta de Mercado Libre que el usuario conectó en Configuración → Integraciones: nickname, cantidad de publicaciones activas (0 si no vende, eso es normal). Ese mismo credential también habilita la búsqueda pública que usa analyze_product cuando no hay un token de servidor cargado. Si no conectó ninguna cuenta, lo indica explícitamente.",
   schema: mercadoLibreSellerSnapshotSchema,
   handler: async (ctx) => {
     const cred = await getUserCredential(ctx.clerkUserId, "mercadolibre_seller");
@@ -251,6 +291,65 @@ const lookupTechStackTool: ToolDef<z.infer<typeof lookupTechStackSchema>> = {
   handler: async (_ctx, input) => lookupTechStack(input.domain),
 };
 
+const listAnalysesSchema = z.object({
+  kind: z
+    .enum(["ANALYZE", "COMPARE", "SEARCH"])
+    .optional()
+    .describe("Filtrar por tipo de análisis (opcional): ANALYZE (analyze_product), COMPARE (compare_markets), SEARCH (search_products)."),
+});
+
+const listAnalysesTool: ToolDef<z.infer<typeof listAnalysesSchema>> = {
+  name: "list_analyses",
+  title: "Listar análisis guardados (chat/MCP)",
+  description:
+    "Lista el historial de analyze_product / compare_markets / search_products corridos desde el chat o el MCP, con su id, tipo, query, veredicto (si aplica) y fecha. Distinto de list_reports, que solo lista reportes generados desde el formulario web.",
+  schema: listAnalysesSchema,
+  handler: async (ctx, input) => listAgentRuns(ctx.clerkUserId, input.kind as AgentRunKind | undefined),
+};
+
+const getAnalysisSchema = z.object({
+  id: z.string().describe("Id de un análisis guardado (devuelto por list_analyses o por el resultado de una tool previa)."),
+});
+
+const getAnalysisTool: ToolDef<z.infer<typeof getAnalysisSchema>> = {
+  name: "get_analysis",
+  title: "Ver análisis guardado (chat/MCP)",
+  description:
+    "Devuelve el payload completo de un análisis guardado por su id: evidencia cruda de analyze_product/compare_markets, o el set completo de candidatos (sin resumir) de search_products.",
+  schema: getAnalysisSchema,
+  handler: async (ctx, input) => {
+    const payload = await getAgentRunPayload(ctx.clerkUserId, input.id);
+    if (!payload) return { error: "No se encontró ese análisis para este usuario." };
+    return payload;
+  },
+};
+
+const metaAdsSnapshotSchema = z.object({
+  query: z.string().min(2).describe("Término de búsqueda para Meta Ad Library (nombre de producto, marca, etc.)."),
+  market: z.enum(COUNTRY_CODES).optional().describe("Mercado local a inspeccionar (default AR). Siempre se compara contra US."),
+  dateFrom: isoDate.optional().describe("Anuncios activos desde (YYYY-MM-DD, opcional)."),
+  dateTo: isoDate.optional().describe("Anuncios activos hasta (YYYY-MM-DD, opcional)."),
+});
+
+const metaAdsSnapshotTool: ToolDef<z.infer<typeof metaAdsSnapshotSchema>> = {
+  name: "meta_ads_snapshot",
+  title: "Buscar en Meta Ad Library",
+  description:
+    "Busca anuncios activos en Meta Ad Library por término, usando el access token que el usuario cargó en Configuración → Integraciones. A diferencia de tienda_nube_snapshot/mercadolibre_seller_snapshot, esto NO es un estado de cuenta propia (Meta no expone 'tus anuncios') — es una búsqueda cruda y sin scoring, la misma fuente que usa analyze_product internamente pero standalone y sin el resto del análisis. Si el usuario no cargó token, lo indica explícitamente.",
+  schema: metaAdsSnapshotSchema,
+  handler: async (ctx, input) => {
+    const cred = await getUserCredential(ctx.clerkUserId, "meta_ads");
+    const result = await collectMetaAds(
+      input.query,
+      cred?.accessToken,
+      input.market ?? "AR",
+      input.dateFrom,
+      input.dateTo,
+    );
+    return (result.raw?.metaAds as MetaAdsData | undefined) ?? { available: false, note: result.error ?? "Sin datos." };
+  },
+};
+
 export const AGENT_TOOLS: ToolDef<unknown>[] = [
   analyzeProduct,
   getReport,
@@ -262,4 +361,7 @@ export const AGENT_TOOLS: ToolDef<unknown>[] = [
   tiendaNubeSnapshotTool,
   mercadoLibreSellerSnapshotTool,
   lookupTechStackTool,
+  listAnalysesTool,
+  getAnalysisTool,
+  metaAdsSnapshotTool,
 ] as unknown as ToolDef<unknown>[];

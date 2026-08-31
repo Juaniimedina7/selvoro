@@ -3,12 +3,19 @@ import { auth } from "@clerk/nextjs/server";
 import { getCurrentRole, roleHasCreditBypass } from "@/lib/auth/roles";
 import { getActiveSubscription } from "@/lib/billing/subscriptions";
 import { listReports } from "@/lib/reports/queries";
+import { listAgentRuns } from "@/lib/agentRuns/queries";
 import { CancelSubscriptionButton } from "@/components/billing/CancelSubscriptionButton";
 
 const VERDICT_LABEL: Record<string, string> = {
   testear: "🟢 Testear",
   investigar: "🟡 Investigar",
   descartar: "🔴 Descartar",
+};
+
+const AGENT_KIND_LABEL: Record<string, string> = {
+  ANALYZE: "Análisis",
+  COMPARE: "Comparación AR/US",
+  SEARCH: "Búsqueda",
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -19,10 +26,11 @@ const ROLE_LABEL: Record<string, string> = {
 
 export default async function DashboardPage() {
   const { userId } = await auth();
-  const [role, sub, reports] = await Promise.all([
+  const [role, sub, reports, agentRuns] = await Promise.all([
     getCurrentRole(),
     getActiveSubscription(userId!),
     listReports(userId!),
+    listAgentRuns(userId!),
   ]);
   const bypass = roleHasCreditBypass(role);
 
@@ -125,6 +133,61 @@ export default async function DashboardPage() {
               <span style={{ fontSize: 13.5 }}>{r.query}</span>
               <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
                 {VERDICT_LABEL[r.verdict] ?? r.verdict} ·{" "}
+                {new Date(r.createdAt).toLocaleDateString("es-AR")}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "28px 0 12px" }}>
+        <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>Historial de análisis (chat/MCP)</h2>
+        {agentRuns.length > 10 && (
+          <Link href="/dashboard/analyses" style={{ fontSize: 12.5, color: "var(--accent)" }}>
+            ver todos
+          </Link>
+        )}
+      </div>
+      {agentRuns.length === 0 ? (
+        <p style={{ color: "var(--muted)", fontSize: 13.5 }}>
+          Todavía no corriste ningún análisis desde el chat o el MCP.
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {agentRuns.slice(0, 10).map((r) => (
+            <Link
+              key={r.id}
+              href={`/dashboard/analyses/${r.id}`}
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                padding: "12px 16px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+                textDecoration: "none",
+                color: "var(--text)",
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <span className="s-tag s-tag--byok" style={{ flexShrink: 0 }}>
+                  {AGENT_KIND_LABEL[r.kind] ?? r.kind}
+                </span>
+                <span
+                  style={{
+                    fontSize: 13.5,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {r.query}
+                </span>
+              </span>
+              <span style={{ fontSize: 12.5, color: "var(--muted)", flexShrink: 0 }}>
+                {r.verdict ? `${VERDICT_LABEL[r.verdict] ?? r.verdict} · ` : ""}
                 {new Date(r.createdAt).toLocaleDateString("es-AR")}
               </span>
             </Link>
