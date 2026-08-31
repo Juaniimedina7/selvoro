@@ -59,7 +59,7 @@ export function CancelSubscriptionButton() {
           style={{
             background: "var(--accent-red)",
             border: "none",
-            color: "#0b0d10",
+            color: "var(--on-accent)",
             fontWeight: 700,
             fontSize: 12.5,
             borderRadius: 8,

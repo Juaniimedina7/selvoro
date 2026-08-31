@@ -84,7 +84,7 @@ export function AnalyzeForm() {
           style={{
             marginTop: 4,
             background: loading ? "var(--surface-2)" : "var(--accent)",
-            color: loading ? "var(--muted)" : "#0b0d10",
+            color: loading ? "var(--muted)" : "var(--on-accent)",
             fontWeight: 700,
             fontSize: 15,
             border: "none",

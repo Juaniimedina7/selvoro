@@ -5,15 +5,18 @@ export function Header() {
   return (
     <header
       style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 50,
         borderBottom: "1px solid var(--border)",
-        background: "var(--surface)",
+        background: "color-mix(in srgb, var(--background) 82%, transparent)",
+        backdropFilter: "saturate(1.1) blur(8px)",
       }}
     >
       <div
+        className="s-wrap"
         style={{
-          maxWidth: 860,
-          margin: "0 auto",
-          padding: "14px 20px",
+          height: 62,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -21,54 +24,67 @@ export function Header() {
       >
         <Link
           href="/"
+          aria-label="Selvoro — inicio"
           style={{
-            fontSize: 13,
-            letterSpacing: 2,
-            textTransform: "uppercase",
-            color: "var(--accent)",
-            fontWeight: 700,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 9,
             textDecoration: "none",
           }}
         >
-          Selvoro
+          <span
+            aria-hidden
+            style={{
+              width: 11,
+              height: 11,
+              borderRadius: 999,
+              background: "var(--accent)",
+              boxShadow: "0 0 0 4px var(--go-soft)",
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "var(--font-display), sans-serif",
+              fontSize: 18,
+              fontWeight: 800,
+              letterSpacing: "-0.01em",
+              color: "var(--text)",
+            }}
+          >
+            Selvoro
+          </span>
         </Link>
 
-        <nav style={{ display: "flex", alignItems: "center", gap: 18, fontSize: 13.5 }}>
-          <Link href="/pricing" style={{ color: "var(--muted)", textDecoration: "none" }}>
-            Planes
-          </Link>
+        <nav style={{ display: "flex", alignItems: "center", gap: 20, fontSize: 14 }}>
           <Show when="signed-in">
-            <Link href="/dashboard/chat" style={{ color: "var(--muted)", textDecoration: "none" }}>
-              Chat
-            </Link>
-            <Link href="/dashboard/settings" style={{ color: "var(--muted)", textDecoration: "none" }}>
-              Integraciones
-            </Link>
-            <Link href="/dashboard" style={{ color: "var(--muted)", textDecoration: "none" }}>
-              Mi cuenta
-            </Link>
+            <Link href="/dashboard/chat" style={navLink}>Chat</Link>
+            <Link href="/dashboard/settings" style={navLink}>Integraciones</Link>
+            <Link href="/pricing" style={navLink}>Planes</Link>
+            <Link href="/dashboard" style={navLink}>Mi cuenta</Link>
             <UserButton />
           </Show>
           <Show when="signed-out">
+            <Link href="/pricing" style={navLink}>Planes</Link>
             <SignInButton mode="modal">
-              <button
-                style={{
-                  background: "var(--accent)",
-                  color: "#0b0d10",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "8px 14px",
-                  cursor: "pointer",
-                }}
-              >
-                Ingresar
-              </button>
+              <button style={navLink} type="button">Ingresar</button>
             </SignInButton>
+            <Link href="/sign-up" className="s-btn s-btn--primary" style={{ padding: "9px 16px", fontSize: 14 }}>
+              Crear cuenta
+            </Link>
           </Show>
         </nav>
       </div>
     </header>
   );
 }
+
+const navLink: React.CSSProperties = {
+  color: "var(--muted)",
+  textDecoration: "none",
+  fontFamily: "var(--font-body), sans-serif",
+  fontSize: 14,
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  padding: 0,
+};

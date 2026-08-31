@@ -37,7 +37,7 @@ export default async function DashboardPage() {
               href="/pricing"
               style={{
                 background: "var(--accent)",
-                color: "#0b0d10",
+                color: "var(--on-accent)",
                 fontWeight: 700,
                 fontSize: 14,
                 borderRadius: 10,

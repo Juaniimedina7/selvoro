@@ -99,7 +99,7 @@ export function ChatWindow() {
               alignSelf: m.role === "user" ? "flex-end" : "flex-start",
               maxWidth: "85%",
               background: m.role === "user" ? "var(--accent)" : "var(--surface-2)",
-              color: m.role === "user" ? "#0b0d10" : "var(--text)",
+              color: m.role === "user" ? "var(--on-accent)" : "var(--text)",
               border: m.role === "user" ? "none" : "1px solid var(--border)",
               borderRadius: 12,
               padding: "10px 14px",
@@ -147,7 +147,7 @@ export function ChatWindow() {
           disabled={loading || !input.trim()}
           style={{
             background: loading ? "var(--surface-2)" : "var(--accent)",
-            color: loading ? "var(--muted)" : "#0b0d10",
+            color: loading ? "var(--muted)" : "var(--on-accent)",
             fontWeight: 700,
             fontSize: 14,
             border: "none",

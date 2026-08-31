@@ -187,7 +187,7 @@ export function IntegrationCard({
 
 const primaryBtn: React.CSSProperties = {
   background: "var(--accent)",
-  color: "#0b0d10",
+  color: "var(--on-accent)",
   fontWeight: 700,
   fontSize: 13,
   border: "none",
