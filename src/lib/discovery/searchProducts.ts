@@ -1,5 +1,6 @@
 import { getLlm } from "@/lib/llm/client";
 import { gatherEvidence } from "@/lib/pipeline";
+import { taxonomyGuidanceForAgent } from "@/lib/taxonomy/niches";
 import type { AnalysisEvidence } from "@/lib/types";
 
 // search_products: NO hay base de datos de "productos ganadores". Se hace en
@@ -22,7 +23,11 @@ REGLAS ESTRICTAS:
 - Esto es SOLO ideación: no tenés acceso a datos de ventas ni tendencias reales en este paso. No afirmes que un producto "está vendiendo" o "es tendencia" — eso se valida después con datos reales.
 - Proponé productos FÍSICOS o DIGITALES concretos y buscables (ej. "masajeador cervical eléctrico", no "algo para el cuello").
 - Cada candidato debe ser un término de búsqueda razonable para Mercado Libre / Meta Ad Library — evitá frases largas o marcas específicas.
-- No repitas variantes del mismo producto.`;
+- No repitas variantes del mismo producto.
+
+Si el criterio apunta a productos digitales / infoproductos, usá el siguiente vocabulario como referencia (elegí lo relevante, no lo uses todo):
+
+${taxonomyGuidanceForAgent()}`;
 
 const BRAINSTORM_SCHEMA: Record<string, unknown> = {
   type: "object",
