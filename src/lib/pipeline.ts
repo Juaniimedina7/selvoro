@@ -62,10 +62,17 @@ export async function gatherEvidence(
     : null;
 
   // 1. Recolección en paralelo (cada collector degrada con gracia).
+  //    input.market es el mercado LOCAL; US se usa siempre como referencia.
   const [mlResult, trendsResult, metaAdsResult] = await Promise.all([
-    collectMercadoLibre(input.query),
-    collectTrends(input.query),
-    collectMetaAds(input.query, metaAdsCredential?.accessToken),
+    collectMercadoLibre(input.query, input.market),
+    collectTrends(input.query, input.market, input.dateFrom, input.dateTo),
+    collectMetaAds(
+      input.query,
+      metaAdsCredential?.accessToken,
+      input.market,
+      input.dateFrom,
+      input.dateTo,
+    ),
   ]);
 
   const ml = (mlResult.raw?.mercadoLibre as MercadoLibreData) ?? EMPTY_ML;

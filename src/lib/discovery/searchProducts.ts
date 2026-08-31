@@ -1,6 +1,11 @@
 import { getLlm } from "@/lib/llm/client";
 import { gatherEvidence } from "@/lib/pipeline";
-import { taxonomyGuidanceForAgent } from "@/lib/taxonomy/niches";
+import {
+  getNiche,
+  taxonomyGuidanceForAgent,
+  type CountryCode,
+  type NicheId,
+} from "@/lib/taxonomy/niches";
 import type { AnalysisEvidence } from "@/lib/types";
 
 // search_products: NO hay base de datos de "productos ganadores". Se hace en
@@ -58,15 +63,23 @@ export async function searchProducts(params: {
   criteria: string;
   maxCandidates?: number;
   clerkUserId?: string;
+  country?: CountryCode;
+  nicheId?: NicheId;
 }): Promise<SearchProductsResult> {
   const maxCandidates = Math.min(
     Math.max(1, params.maxCandidates ?? DEFAULT_MAX_CANDIDATES),
     HARD_MAX_CANDIDATES,
   );
+  const market: CountryCode = params.country ?? "AR";
+
+  const niche = params.nicheId ? getNiche(params.nicheId) : undefined;
+  const nicheHint = niche
+    ? `\n\nNicho enfocado: ${niche.label}. Keywords de referencia (elegí las relevantes, no todas): ${niche.keywords.join(", ")}.`
+    : "";
 
   const brainstorm = await getLlm().generateJson<{ candidatos: string[] }>({
     system: BRAINSTORM_SYSTEM,
-    user: `Criterio del usuario: "${params.criteria}"\n\nProponé hasta ${maxCandidates} productos candidatos concretos. Devolvé el JSON pedido.`,
+    user: `Criterio del usuario: "${params.criteria}"\nMercado local objetivo: ${market}.${nicheHint}\n\nProponé hasta ${maxCandidates} productos candidatos concretos. Devolvé el JSON pedido.`,
     schema: BRAINSTORM_SCHEMA,
   });
 
@@ -74,7 +87,7 @@ export async function searchProducts(params: {
 
   const evidences = await Promise.all(
     candidateQueries.map((query) =>
-      gatherEvidence({ query, market: "AR" }, { clerkUserId: params.clerkUserId }),
+      gatherEvidence({ query, market }, { clerkUserId: params.clerkUserId }),
     ),
   );
 

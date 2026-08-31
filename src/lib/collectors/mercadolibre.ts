@@ -1,3 +1,4 @@
+import type { CountryCode } from "@/lib/taxonomy/niches";
 import type { CollectorResult, MercadoLibreData, Signal } from "@/lib/types";
 
 // Collector de Mercado Libre. Ancla local del MVP (precio, competencia, listings).
@@ -5,6 +6,18 @@ import type { CollectorResult, MercadoLibreData, Signal } from "@/lib/types";
 // en vez de romper el pipeline (ver plan §8 y §13: "sin datos" != "sin competencia").
 
 const ML_API = "https://api.mercadolibre.com";
+
+// Mercado Libre opera solo en LATAM: cada país tiene su "site id". US y ES no
+// están cubiertos → el collector degrada con gracia para esos mercados.
+const ML_SITE_BY_COUNTRY: Partial<Record<CountryCode, string>> = {
+  AR: "MLA",
+  MX: "MLM",
+  BR: "MLB",
+  CL: "MLC",
+  CO: "MCO",
+  UY: "MLU",
+  PE: "MPE",
+};
 
 interface MlSearchResponse {
   paging?: { total?: number };
@@ -26,15 +39,14 @@ function median(nums: number[]): number | null {
     : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
-export async function collectMercadoLibre(query: string): Promise<CollectorResult> {
-  const site = process.env.ML_SITE_ID || "MLA";
-  const token = process.env.ML_ACCESS_TOKEN?.trim();
-  const url = `${ML_API}/sites/${site}/search?q=${encodeURIComponent(query)}&limit=50`;
-
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
+export async function collectMercadoLibre(
+  query: string,
+  country: CountryCode = "AR",
+): Promise<CollectorResult> {
   const source = "Mercado Libre API";
+  // Site por país; si no está mapeado (US, ES) usamos ML_SITE_ID o degradamos.
+  const site = ML_SITE_BY_COUNTRY[country] ?? process.env.ML_SITE_ID;
+  const token = process.env.ML_ACCESS_TOKEN?.trim();
 
   const degraded = (note: string, error?: string): CollectorResult => {
     const data: MercadoLibreData = {
@@ -60,6 +72,16 @@ export async function collectMercadoLibre(query: string): Promise<CollectorResul
     ];
     return { source, signals, raw: { mercadoLibre: data }, error };
   };
+
+  if (!site) {
+    return degraded(
+      `Mercado Libre no opera en ${country} (solo cubre LATAM: AR, MX, BR, CL, CO, UY, PE). Se usan las demás fuentes para este mercado.`,
+    );
+  }
+
+  const url = `${ML_API}/sites/${site}/search?q=${encodeURIComponent(query)}&limit=50`;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
 
   let res: Response;
   try {

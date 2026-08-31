@@ -71,8 +71,11 @@ export async function POST(request: Request) {
 
   const input: AnalyzeInput = {
     query: parsed.data.query,
-    market: "AR",
+    market: parsed.data.market ?? "AR",
     ticketUsd: parsed.data.ticketUsd,
+    nicheId: parsed.data.nicheId,
+    dateFrom: parsed.data.dateFrom,
+    dateTo: parsed.data.dateTo,
   };
 
   try {

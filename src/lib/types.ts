@@ -1,6 +1,8 @@
 // Modelo de dominio de Selvoro (slice 1: validación de producto para Argentina).
 // Mantiene la trazabilidad Signal -> Score -> Recommendation -> Report del plan.
 
+import type { CountryCode, NicheId } from "@/lib/taxonomy/niches";
+
 export type Confidence = "alta" | "media" | "baja";
 
 export type Verdict = "testear" | "investigar" | "descartar";
@@ -21,10 +23,15 @@ export type ScoreDimension =
 export interface AnalyzeInput {
   /** Nombre o descripción del producto, o una URL (AliExpress/tienda). */
   query: string;
-  /** Mercado objetivo. En el MVP fijo en AR. */
-  market: "AR";
+  /** Mercado local objetivo (home). US se usa siempre como referencia para el gap. */
+  market: CountryCode;
   /** Ticket deseado en USD (opcional, mejora el análisis de margen). */
   ticketUsd?: number;
+  /** Nicho (opcional): da contexto al análisis y a la búsqueda. */
+  nicheId?: NicheId;
+  /** Rango de fechas (ISO YYYY-MM-DD) para anuncios activos / tendencia. */
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 /** Una señal observable con su fuente y confianza (nunca una métrica de ventas real). */
@@ -60,11 +67,15 @@ export interface MercadoLibreData {
   note?: string;
 }
 
-/** Datos de tendencia (Google Trends), AR vs US. */
+/** Datos de tendencia (Google Trends): mercado local (ar) vs referencia US (us). */
 export interface TrendsData {
   available: boolean;
+  /** Slot "local": corresponde a `homeCountry` (AR por defecto). */
   ar: { direction: "subiendo" | "estable" | "bajando" | "desconocido"; points: number[] };
+  /** Slot "referencia": siempre US. */
   us: { direction: "subiendo" | "estable" | "bajando" | "desconocido"; points: number[] };
+  /** País local real del slot `ar` (default AR). */
+  homeCountry?: CountryCode;
   note?: string;
 }
 
@@ -81,11 +92,15 @@ export interface MetaAdsMarketData {
   sampleAdSnippets: string[];
 }
 
-/** Datos de Meta Ad Library, AR vs US (mismo patrón dual que TrendsData). */
+/** Datos de Meta Ad Library: mercado local (ar) vs referencia US (us). */
 export interface MetaAdsData {
   available: boolean;
+  /** Slot "local": corresponde a `homeCountry` (AR por defecto). */
   ar: MetaAdsMarketData | null;
+  /** Slot "referencia": siempre US. */
   us: MetaAdsMarketData | null;
+  /** País local real del slot `ar` (default AR). */
+  homeCountry?: CountryCode;
   searchTermsUsed: string;
   note?: string;
 }

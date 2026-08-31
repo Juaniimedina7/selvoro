@@ -1,3 +1,4 @@
+import type { CountryCode } from "@/lib/taxonomy/niches";
 import type { CollectorResult, MetaAdsData, MetaAdsMarketData, Signal } from "@/lib/types";
 
 // Collector de Meta Ad Library. Diferenciador clave del producto: persistencia
@@ -88,16 +89,22 @@ type FetchOutcome =
 
 async function fetchMarket(
   query: string,
-  country: "AR" | "US",
+  country: CountryCode,
   token: string,
   version: string,
   limit = 100,
+  dateFrom?: string,
+  dateTo?: string,
 ): Promise<FetchOutcome> {
+  const dateParams =
+    (dateFrom ? `&ad_delivery_date_min=${encodeURIComponent(dateFrom)}` : "") +
+    (dateTo ? `&ad_delivery_date_max=${encodeURIComponent(dateTo)}` : "");
   const url =
     `https://graph.facebook.com/${version}/ads_archive` +
     `?search_terms=${encodeURIComponent(query)}` +
     `&ad_reached_countries=${encodeURIComponent(JSON.stringify([country]))}` +
     `&ad_active_status=ACTIVE&ad_type=ALL&limit=${limit}` +
+    dateParams +
     `&fields=${ADS_FIELDS}` +
     `&access_token=${encodeURIComponent(token)}`;
 
@@ -174,7 +181,13 @@ export async function verifyMetaAdsAccessToken(token: string): Promise<{ ok: boo
  * (BYOK, ver src/lib/credentials/) — sin token, degrada con gracia igual que
  * cualquier otra fuente sin configurar.
  */
-export async function collectMetaAds(query: string, accessToken?: string): Promise<CollectorResult> {
+export async function collectMetaAds(
+  query: string,
+  accessToken?: string,
+  country: CountryCode = "AR",
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<CollectorResult> {
   const source = "Meta Ad Library API";
   const token = accessToken?.trim();
   const version = process.env.META_GRAPH_API_VERSION?.trim() || DEFAULT_GRAPH_VERSION;
@@ -184,6 +197,7 @@ export async function collectMetaAds(query: string, accessToken?: string): Promi
       available: false,
       ar: null,
       us: null,
+      homeCountry: country,
       searchTermsUsed: query,
       note,
     };
@@ -208,8 +222,8 @@ export async function collectMetaAds(query: string, accessToken?: string): Promi
   }
 
   const [arResult, usResult] = await Promise.all([
-    fetchMarket(query, "AR", token, version),
-    fetchMarket(query, "US", token, version),
+    fetchMarket(query, country, token, version, 100, dateFrom, dateTo),
+    fetchMarket(query, "US", token, version, 100, dateFrom, dateTo),
   ]);
 
   if (!arResult.ok && !usResult.ok) {
@@ -226,6 +240,7 @@ export async function collectMetaAds(query: string, accessToken?: string): Promi
     available: true,
     ar,
     us,
+    homeCountry: country,
     searchTermsUsed: query,
   };
 

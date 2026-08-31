@@ -1,3 +1,4 @@
+import type { CountryCode } from "@/lib/taxonomy/niches";
 import type { CollectorResult, Signal, TrendsData } from "@/lib/types";
 
 // Collector de Google Trends (best-effort). No hay API oficial: usamos el mismo
@@ -36,9 +37,10 @@ interface ExploreWidget {
 async function getInterestOverTime(
   query: string,
   geo: string,
+  timeframe = "today 12-m",
 ): Promise<number[] | null> {
   const exploreReq = {
-    comparisonItem: [{ keyword: query, geo, time: "today 12-m" }],
+    comparisonItem: [{ keyword: query, geo, time: timeframe }],
     category: 0,
     property: "",
   };
@@ -82,14 +84,23 @@ async function getInterestOverTime(
   return points.length ? points : null;
 }
 
-export async function collectTrends(query: string): Promise<CollectorResult> {
+export async function collectTrends(
+  query: string,
+  country: CountryCode = "AR",
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<CollectorResult> {
   const source = "Google Trends (no oficial)";
+  // Trends acepta "YYYY-MM-DD YYYY-MM-DD" como timeframe custom.
+  const timeframe =
+    dateFrom && dateTo ? `${dateFrom} ${dateTo}` : "today 12-m";
 
   const degraded = (note: string, error?: string): CollectorResult => {
     const data: TrendsData = {
       available: false,
       ar: { direction: "desconocido", points: [] },
       us: { direction: "desconocido", points: [] },
+      homeCountry: country,
       note,
     };
     const signals: Signal[] = [
@@ -107,8 +118,8 @@ export async function collectTrends(query: string): Promise<CollectorResult> {
 
   try {
     const [ar, us] = await Promise.all([
-      getInterestOverTime(query, "AR").catch(() => null),
-      getInterestOverTime(query, "US").catch(() => null),
+      getInterestOverTime(query, country, timeframe).catch(() => null),
+      getInterestOverTime(query, "US", timeframe).catch(() => null),
     ]);
 
     if (!ar && !us) {
@@ -121,6 +132,7 @@ export async function collectTrends(query: string): Promise<CollectorResult> {
       available: true,
       ar: { direction: direction(ar ?? []), points: ar ?? [] },
       us: { direction: direction(us ?? []), points: us ?? [] },
+      homeCountry: country,
     };
 
     const signals: Signal[] = [

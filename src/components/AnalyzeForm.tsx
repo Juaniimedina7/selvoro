@@ -2,11 +2,16 @@
 
 import { useState } from "react";
 import { ReportView } from "@/components/ReportView";
+import { COUNTRIES, NICHES, type CountryCode, type NicheId } from "@/lib/taxonomy/niches";
 import type { Report } from "@/lib/types";
 
 export function AnalyzeForm() {
   const [query, setQuery] = useState("");
   const [ticket, setTicket] = useState("");
+  const [market, setMarket] = useState<CountryCode>("AR");
+  const [nicheId, setNicheId] = useState<NicheId | "">("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
@@ -24,6 +29,10 @@ export function AnalyzeForm() {
         body: JSON.stringify({
           query: query.trim(),
           ticketUsd: ticket ? Number(ticket) : undefined,
+          market,
+          nicheId: nicheId || undefined,
+          dateFrom: dateFrom || undefined,
+          dateTo: dateTo || undefined,
         }),
       });
       const data = await res.json();
@@ -53,30 +62,61 @@ export function AnalyzeForm() {
           gap: 14,
         }}
       >
-        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={{ fontSize: 13, color: "var(--muted)" }}>
-            Producto (nombre o URL de AliExpress/tienda)
-          </span>
+        <label style={labelStyle}>
+          <span style={hintStyle}>Producto (nombre o URL de AliExpress/tienda)</span>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ej: proyector portátil, masajeador cervical, botella térmica..."
+            placeholder="Ej: proyector portátil, guía keto, masajeador cervical…"
             style={inputStyle}
           />
         </label>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={{ fontSize: 13, color: "var(--muted)" }}>
-            Ticket objetivo en USD (opcional)
-          </span>
-          <input
-            value={ticket}
-            onChange={(e) => setTicket(e.target.value.replace(/[^0-9.]/g, ""))}
-            placeholder="Ej: 45"
-            inputMode="decimal"
-            style={{ ...inputStyle, maxWidth: 160 }}
-          />
-        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <label style={labelStyle}>
+            <span style={hintStyle}>Mercado local</span>
+            <select value={market} onChange={(e) => setMarket(e.target.value as CountryCode)} style={inputStyle}>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label style={labelStyle}>
+            <span style={hintStyle}>Nicho (opcional)</span>
+            <select value={nicheId} onChange={(e) => setNicheId(e.target.value as NicheId | "")} style={inputStyle}>
+              <option value="">Todos</option>
+              {NICHES.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.emoji} {n.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <label style={labelStyle}>
+            <span style={hintStyle}>Ticket USD (opcional)</span>
+            <input
+              value={ticket}
+              onChange={(e) => setTicket(e.target.value.replace(/[^0-9.]/g, ""))}
+              placeholder="Ej: 45"
+              inputMode="decimal"
+              style={inputStyle}
+            />
+          </label>
+          <label style={labelStyle}>
+            <span style={hintStyle}>Anuncios desde</span>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>
+            <span style={hintStyle}>Anuncios hasta</span>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
+          </label>
+        </div>
 
         <button
           type="submit"
@@ -125,6 +165,8 @@ export function AnalyzeForm() {
   );
 }
 
+const labelStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 6 };
+const hintStyle: React.CSSProperties = { fontSize: 13, color: "var(--muted)" };
 const inputStyle: React.CSSProperties = {
   background: "var(--surface-2)",
   border: "1px solid var(--border)",
@@ -133,4 +175,5 @@ const inputStyle: React.CSSProperties = {
   color: "var(--text)",
   fontSize: 15,
   outline: "none",
+  width: "100%",
 };

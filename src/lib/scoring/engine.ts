@@ -1,3 +1,4 @@
+import { COUNTRIES } from "@/lib/taxonomy/niches";
 import type {
   AnalyzeInput,
   Confidence,
@@ -344,13 +345,20 @@ export function computeScore(
   input: AnalyzeInput,
 ): ScoreResult {
   const ctx: Ctx = { ml, trends, metaAds, input };
+  // Etiquetas dinámicas: el mercado local depende de input.market (no siempre AR).
+  const home = COUNTRIES.find((c) => c.code === input.market)?.label ?? input.market;
+  const labels: Record<ScoreDimension, string> = {
+    ...LABELS,
+    saturacion_local: `Saturación local (${home})`,
+    oportunidad_local: `Oportunidad local (gap US↔${input.market})`,
+  };
   const dimensions: DimensionScore[] = (
     Object.keys(EVALUATORS) as ScoreDimension[]
   ).map((dim) => {
     const evalResult = EVALUATORS[dim](ctx);
     return {
       dimension: dim,
-      label: LABELS[dim],
+      label: labels[dim],
       value: evalResult.value,
       band: band(evalResult.value),
       weight: WEIGHTS[dim],

@@ -57,12 +57,23 @@ function summarizeEvidence(evidence: AnalysisEvidence) {
   };
 }
 
+// Enums alineados con src/lib/taxonomy/niches.ts.
+const COUNTRY_CODES = ["AR", "US", "MX", "BR", "CL", "CO", "ES", "UY", "PE"] as const;
+const NICHE_IDS = [
+  "salud", "dinero", "relaciones", "recetas", "espiritualidad",
+  "padres_educacion", "productividad", "ia", "entretenimiento",
+] as const;
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
 const analyzeProductSchema = z.object({
   query: z
     .string()
     .min(2)
     .describe("Nombre del producto, tienda/competidor puntual, o URL de tienda/AliExpress."),
   ticketUsd: z.number().positive().optional().describe("Ticket objetivo en USD (opcional)."),
+  market: z.enum(COUNTRY_CODES).optional().describe("Mercado local objetivo (default AR). US se usa como referencia."),
+  dateFrom: isoDate.optional().describe("Anuncios activos desde (YYYY-MM-DD, opcional)."),
+  dateTo: isoDate.optional().describe("Anuncios activos hasta (YYYY-MM-DD, opcional)."),
 });
 
 const analyzeProduct: ToolDef<z.infer<typeof analyzeProductSchema>> = {
@@ -73,7 +84,13 @@ const analyzeProduct: ToolDef<z.infer<typeof analyzeProductSchema>> = {
   schema: analyzeProductSchema,
   handler: async (ctx, input) => {
     const evidence = await gatherEvidence(
-      { query: input.query, market: "AR", ticketUsd: input.ticketUsd },
+      {
+        query: input.query,
+        market: input.market ?? "AR",
+        ticketUsd: input.ticketUsd,
+        dateFrom: input.dateFrom,
+        dateTo: input.dateTo,
+      },
       { clerkUserId: ctx.clerkUserId },
     );
     return summarizeEvidence(evidence);
@@ -119,7 +136,8 @@ const listSourcesTool: ToolDef<z.infer<typeof listSourcesSchema>> = {
 };
 
 const compareMarketsSchema = z.object({
-  query: z.string().min(2).describe("Producto a comparar entre Argentina y Estados Unidos."),
+  query: z.string().min(2).describe("Producto a comparar entre el mercado local y Estados Unidos."),
+  market: z.enum(COUNTRY_CODES).optional().describe("Mercado local a comparar contra US (default AR)."),
 });
 
 const compareMarketsTool: ToolDef<z.infer<typeof compareMarketsSchema>> = {
@@ -129,7 +147,10 @@ const compareMarketsTool: ToolDef<z.infer<typeof compareMarketsSchema>> = {
     "Compara tendencia de búsqueda y anuncios activos de Meta entre Argentina y Estados Unidos para un producto. Solo soporta AR vs US (los collectors no soportan otros pares de mercado todavía). Evidencia cruda, sin narrativa propia.",
   schema: compareMarketsSchema,
   handler: async (ctx, input) =>
-    compareMarkets({ query: input.query, market: "AR" }, { clerkUserId: ctx.clerkUserId }),
+    compareMarkets(
+      { query: input.query, market: input.market ?? "AR" },
+      { clerkUserId: ctx.clerkUserId },
+    ),
 };
 
 const generateTestBriefSchema = z.object({
@@ -163,6 +184,8 @@ const searchProductsSchema = z.object({
     .max(HARD_MAX_CANDIDATES)
     .optional()
     .describe(`Cantidad de candidatos a evaluar (default ${DEFAULT_MAX_CANDIDATES}, máximo ${HARD_MAX_CANDIDATES}).`),
+  country: z.enum(COUNTRY_CODES).optional().describe("Mercado local objetivo (default AR)."),
+  niche: z.enum(NICHE_IDS).optional().describe("Nicho para enfocar la búsqueda (opcional)."),
 });
 
 const searchProductsTool: ToolDef<z.infer<typeof searchProductsSchema>> = {
@@ -176,6 +199,8 @@ const searchProductsTool: ToolDef<z.infer<typeof searchProductsSchema>> = {
       criteria: input.criteria,
       maxCandidates: input.maxCandidates,
       clerkUserId: ctx.clerkUserId,
+      country: input.country,
+      nicheId: input.niche,
     });
     return {
       criteria,
