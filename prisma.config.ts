@@ -18,6 +18,12 @@ export default defineConfig({
     // diffear migraciones sin tocar la real — NO es lo mismo que DIRECT_URL
     // (esa es la misma DB de siempre, solo sin pooler). Con Neon: otra DB en
     // el mismo proyecto (ver README, sección de setup de Prisma).
-    shadowDatabaseUrl: env("SHADOW_DATABASE_URL"),
+    //
+    // Solo se necesita para `prisma migrate dev` en local. En Vercel (build:
+    // prisma generate) NO se usa, así que la dejamos opcional para no exigir
+    // SHADOW_DATABASE_URL en el entorno de producción.
+    ...(process.env.SHADOW_DATABASE_URL
+      ? { shadowDatabaseUrl: env("SHADOW_DATABASE_URL") }
+      : {}),
   },
 });
