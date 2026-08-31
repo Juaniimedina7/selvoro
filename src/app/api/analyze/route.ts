@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { getCurrentRole, roleHasCreditBypass } from "@/lib/auth/roles";
 import { checkAndDebitCredit, refundCredit } from "@/lib/billing/credits";
 import { runAnalysis } from "@/lib/pipeline";
 import { persistReport } from "@/lib/reports/persist";
@@ -63,10 +64,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const debit = await checkAndDebitCredit(userId);
-  if (!debit.ok) {
-    const info = CREDIT_ERROR[debit.code];
-    return NextResponse.json({ error: info.message, code: debit.code }, { status: info.status });
+  // admin y socio no gastan créditos (bypass). El resto debita 1 crédito atómico.
+  const bypass = roleHasCreditBypass(await getCurrentRole());
+  let subscriptionId: string | null = null;
+  if (!bypass) {
+    const debit = await checkAndDebitCredit(userId);
+    if (!debit.ok) {
+      const info = CREDIT_ERROR[debit.code];
+      return NextResponse.json({ error: info.message, code: debit.code }, { status: info.status });
+    }
+    subscriptionId = debit.subscriptionId;
   }
 
   const input: AnalyzeInput = {
@@ -80,15 +87,18 @@ export async function POST(request: Request) {
 
   try {
     const report = await runAnalysis(input, { clerkUserId: userId });
-    await persistReport({ clerkUserId: userId, subscriptionId: debit.subscriptionId, report });
+    await persistReport({ clerkUserId: userId, subscriptionId, report });
     return NextResponse.json(report);
   } catch (e) {
     console.error("[/api/analyze] error:", e);
-    await refundCredit({
-      clerkUserId: userId,
-      subscriptionId: debit.subscriptionId,
-      reason: "analysis:failed",
-    }).catch((refundErr) => console.error("[/api/analyze] refund failed:", refundErr));
+    // Solo reintegramos si efectivamente se debitó (no en bypass).
+    if (subscriptionId) {
+      await refundCredit({
+        clerkUserId: userId,
+        subscriptionId,
+        reason: "analysis:failed",
+      }).catch((refundErr) => console.error("[/api/analyze] refund failed:", refundErr));
+    }
     return NextResponse.json(
       { error: "Falló el análisis. Revisá los logs del servidor." },
       { status: 500 },

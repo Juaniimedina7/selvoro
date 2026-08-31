@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
+import { getCurrentRole, roleHasCreditBypass } from "@/lib/auth/roles";
 import { getActiveSubscription } from "@/lib/billing/subscriptions";
 import { listReports } from "@/lib/reports/queries";
 import { CancelSubscriptionButton } from "@/components/billing/CancelSubscriptionButton";
@@ -10,16 +11,37 @@ const VERDICT_LABEL: Record<string, string> = {
   descartar: "🔴 Descartar",
 };
 
+const ROLE_LABEL: Record<string, string> = {
+  admin: "Admin",
+  socio: "Socio",
+  member: "Miembro",
+};
+
 export default async function DashboardPage() {
   const { userId } = await auth();
-  const [sub, reports] = await Promise.all([
+  const [role, sub, reports] = await Promise.all([
+    getCurrentRole(),
     getActiveSubscription(userId!),
     listReports(userId!),
   ]);
+  const bypass = roleHasCreditBypass(role);
 
   return (
     <>
-      <h1 style={{ fontSize: 26, fontWeight: 800, margin: "0 0 24px" }}>Mi cuenta</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", margin: "0 0 24px" }}>
+        <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0 }}>Mi cuenta</h1>
+        <span className="s-tag s-tag--byok">{ROLE_LABEL[role]}</span>
+        {bypass && (
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent)" }}>
+            créditos ilimitados
+          </span>
+        )}
+        {role === "admin" && (
+          <Link href="/admin" className="s-btn s-btn--ghost" style={{ marginLeft: "auto", padding: "8px 14px", fontSize: 13 }}>
+            Panel interno
+          </Link>
+        )}
+      </div>
 
       <section
         style={{
