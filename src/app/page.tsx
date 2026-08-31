@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 import { AnalyzeForm } from "@/components/AnalyzeForm";
@@ -246,7 +247,10 @@ export default async function Home() {
       {/* ===================== FOOTER ===================== */}
       <footer style={{ borderTop: "1px solid var(--border)", background: "var(--surface)" }}>
         <div className="s-wrap" style={{ paddingBlock: 28, display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontFamily: "var(--font-display)", fontWeight: 800 }}>Selvoro</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
+            <Image src="/logo-mark.png" alt="" width={24} height={24} style={{ display: "block" }} />
+            <span style={{ fontFamily: "var(--font-display)", fontWeight: 800 }}>Selvoro</span>
+          </span>
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)" }}>
             Inteligencia de producto para vender en Argentina.
           </span>

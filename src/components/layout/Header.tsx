@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { Show, SignInButton, UserButton } from "@clerk/nextjs";
 
@@ -32,15 +33,13 @@ export function Header() {
             textDecoration: "none",
           }}
         >
-          <span
-            aria-hidden
-            style={{
-              width: 11,
-              height: 11,
-              borderRadius: 999,
-              background: "var(--accent)",
-              boxShadow: "0 0 0 4px var(--go-soft)",
-            }}
+          <Image
+            src="/logo-mark.png"
+            alt=""
+            width={28}
+            height={28}
+            priority
+            style={{ display: "block" }}
           />
           <span
             style={{

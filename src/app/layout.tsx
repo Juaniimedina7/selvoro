@@ -22,9 +22,23 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://selvoro.vercel.app"),
   title: "Selvoro — ¿Vale la pena testear ese producto en Argentina?",
   description:
     "Tu analista de inteligencia de mercado para e-commerce. Selvoro junta señales públicas reales, arma un score explicable y te da un veredicto — testear, investigar o descartar. Nunca métricas de ventas inventadas.",
+  openGraph: {
+    title: "Selvoro — Inteligencia de producto para vender en Argentina",
+    description:
+      "Junta señales públicas reales, arma un score explicable y te da un veredicto: testear, investigar o descartar.",
+    images: ["/logo-selv.png"],
+    locale: "es_AR",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Selvoro — Inteligencia de producto para e-commerce",
+    images: ["/logo-selv.png"],
+  },
 };
 
 export default function RootLayout({
