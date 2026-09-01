@@ -15,7 +15,18 @@ export default async function AgentAnalysisDetailPage({
 }) {
   const { id } = await params;
   const { userId } = await auth();
-  const run = await getAgentRun(userId!, id);
+
+  let run: Awaited<ReturnType<typeof getAgentRun>>;
+  try {
+    run = await getAgentRun(userId!, id);
+  } catch (e) {
+    console.error("[dashboard/analyses/[id]] getAgentRun falló:", e);
+    return (
+      <p style={{ color: "var(--accent-red)", fontSize: 13.5 }}>
+        No se pudo cargar este análisis ahora mismo. Probá de nuevo en un rato.
+      </p>
+    );
+  }
   if (!run) notFound();
 
   return (

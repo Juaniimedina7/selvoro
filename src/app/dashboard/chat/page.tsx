@@ -4,7 +4,14 @@ import { listConversations } from "@/lib/conversations/queries";
 
 export default async function ChatPage() {
   const { userId } = await auth();
-  const conversations = await listConversations(userId!);
+  // Best-effort: si la DB falla acá, mostramos el chat igual (sin historial)
+  // en vez de tirar abajo la página entera.
+  let conversations: Awaited<ReturnType<typeof listConversations>> = [];
+  try {
+    conversations = await listConversations(userId!);
+  } catch (e) {
+    console.error("[dashboard/chat] listConversations falló:", e);
+  }
 
   return (
     <>

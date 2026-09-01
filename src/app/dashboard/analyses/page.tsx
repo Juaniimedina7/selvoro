@@ -16,7 +16,14 @@ const VERDICT_LABEL: Record<string, string> = {
 
 export default async function AgentAnalysesPage() {
   const { userId } = await auth();
-  const runs = await listAgentRuns(userId!);
+  let runs: Awaited<ReturnType<typeof listAgentRuns>> = [];
+  let loadError = false;
+  try {
+    runs = await listAgentRuns(userId!);
+  } catch (e) {
+    console.error("[dashboard/analyses] listAgentRuns falló:", e);
+    loadError = true;
+  }
 
   return (
     <>
@@ -25,7 +32,11 @@ export default async function AgentAnalysesPage() {
         Historial de analyze_product, compare_markets y search_products corridos desde el chat o el MCP.
       </p>
 
-      {runs.length === 0 ? (
+      {loadError ? (
+        <p style={{ color: "var(--accent-red)", fontSize: 13.5 }}>
+          No se pudo cargar el historial ahora mismo. Probá de nuevo en un rato.
+        </p>
+      ) : runs.length === 0 ? (
         <p style={{ color: "var(--muted)", fontSize: 13.5 }}>Todavía no hay análisis guardados desde el chat/MCP.</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

@@ -26,13 +26,22 @@ const ROLE_LABEL: Record<string, string> = {
 
 export default async function DashboardPage() {
   const { userId } = await auth();
-  const [role, sub, reports, agentRuns] = await Promise.all([
+  const [role, sub, reports] = await Promise.all([
     getCurrentRole(),
     getActiveSubscription(userId!),
     listReports(userId!),
-    listAgentRuns(userId!),
   ]);
   const bypass = roleHasCreditBypass(role);
+
+  // Aislado del Promise.all de arriba a propósito: si esta tabla nueva falla
+  // (ej. la DB de producción todavía no tiene la migración), no debe tirar
+  // abajo el resto de "Mi cuenta" (plan, créditos, reportes).
+  let agentRuns: Awaited<ReturnType<typeof listAgentRuns>> = [];
+  try {
+    agentRuns = await listAgentRuns(userId!);
+  } catch (e) {
+    console.error("[dashboard] listAgentRuns falló:", e);
+  }
 
   return (
     <>

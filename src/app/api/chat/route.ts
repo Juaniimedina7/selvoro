@@ -36,17 +36,29 @@ export async function POST(request: Request) {
   // Resolvemos el conversationId ANTES de tocar el LLM: si viene uno y no es
   // del usuario (o no existe), 404 inmediato — no gastamos un turno de
   // modelo sobre un id inválido/spoofeado, ni arrancamos una conversación
-  // nueva en silencio si el cliente tiene un bug.
-  let resolvedConversationId: string;
+  // nueva en silencio si el cliente tiene un bug. La persistencia de
+  // conversaciones es best-effort: si la DB falla acá (tabla faltante,
+  // conexión caída), el chat tiene que seguir funcionando igual, solo sin
+  // guardar el historial de este turno — nunca bloquear la respuesta del
+  // agente por esto.
+  let resolvedConversationId: string | null = null;
   if (conversationId) {
-    const existing = await getConversation(userId, conversationId);
-    if (!existing) {
-      return new Response("Conversación no encontrada.", { status: 404 });
+    try {
+      const existing = await getConversation(userId, conversationId);
+      if (!existing) {
+        return new Response("Conversación no encontrada.", { status: 404 });
+      }
+      resolvedConversationId = existing.id;
+    } catch (e) {
+      console.error("[/api/chat] getConversation falló:", e);
     }
-    resolvedConversationId = existing.id;
   } else {
-    const created = await upsertConversationMessages({ clerkUserId: userId, messages: chatMessages });
-    resolvedConversationId = created.id;
+    try {
+      const created = await upsertConversationMessages({ clerkUserId: userId, messages: chatMessages });
+      resolvedConversationId = created.id;
+    } catch (e) {
+      console.error("[/api/chat] crear conversación falló:", e);
+    }
   }
 
   const runner = createChatToolRunner(userId, messages as Anthropic.Beta.BetaMessageParam[]);
@@ -84,10 +96,8 @@ export async function POST(request: Request) {
     },
   });
 
-  return new Response(readable, {
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "X-Conversation-Id": resolvedConversationId,
-    },
-  });
+  const headers: Record<string, string> = { "Content-Type": "text/plain; charset=utf-8" };
+  if (resolvedConversationId) headers["X-Conversation-Id"] = resolvedConversationId;
+
+  return new Response(readable, { headers });
 }
