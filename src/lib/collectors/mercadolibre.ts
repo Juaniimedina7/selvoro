@@ -96,7 +96,7 @@ export async function collectMercadoLibre(
 
   let res: Response;
   try {
-    res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
   } catch (e) {
     return degraded(
       "No se pudo contactar la API de Mercado Libre (timeout o red).",

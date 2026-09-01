@@ -112,7 +112,7 @@ async function fetchMarket(
   try {
     res = await fetch(url, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(10000),
     });
   } catch (e) {
     return { ok: false, kind: "network", message: String(e) };

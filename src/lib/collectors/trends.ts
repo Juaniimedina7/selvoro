@@ -50,7 +50,7 @@ async function getInterestOverTime(
 
   const exploreRes = await fetch(exploreUrl, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(8000),
   });
   if (!exploreRes.ok) return null;
 
@@ -70,7 +70,7 @@ async function getInterestOverTime(
 
   const iotRes = await fetch(iotUrl, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(8000),
   });
   if (!iotRes.ok) return null;
 

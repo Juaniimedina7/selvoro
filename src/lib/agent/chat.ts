@@ -22,7 +22,13 @@ REGLAS ESTRICTAS (idénticas a las del reporte escrito):
 // encadenados). No es lo mismo que max_tokens (techo por respuesta) — evita
 // que un turno con varias tools (ej. varios llamados a search_products)
 // escale sin control. Mínimo permitido por la API: 20.000.
-const TASK_BUDGET_TOKENS = Number(process.env.CHAT_TASK_BUDGET_TOKENS) || 50_000;
+// Bajado de 50.000 a 28.000: en el plan Hobby de Vercel las funciones se
+// matan a los 60s duro (ver /api/chat/route.ts) sin importar maxDuration —
+// un turno largo (varias tool calls + redacción final) puede superar eso.
+// Menos tokens de budget = menos tool calls encadenadas posibles por turno,
+// lo que baja el riesgo de timeout. Mitiga, no elimina — la solución real es
+// un plan de Vercel sin ese tope duro.
+const TASK_BUDGET_TOKENS = Number(process.env.CHAT_TASK_BUDGET_TOKENS) || 28_000;
 
 function getAnthropicClient(): Anthropic {
   return new Anthropic();
