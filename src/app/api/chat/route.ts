@@ -61,7 +61,13 @@ export async function POST(request: Request) {
     }
   }
 
-  const runner = createChatToolRunner(userId, messages as Anthropic.Beta.BetaMessageParam[]);
+  let runner: ReturnType<typeof createChatToolRunner>;
+  try {
+    runner = createChatToolRunner(userId, messages as Anthropic.Beta.BetaMessageParam[]);
+  } catch (e) {
+    console.error("[/api/chat] createChatToolRunner falló:", e);
+    return new Response("No se pudo iniciar el agente. Probá de nuevo en un rato.", { status: 500 });
+  }
 
   const encoder = new TextEncoder();
   let fullAssistantText = "";
