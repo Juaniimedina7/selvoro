@@ -1,0 +1,30 @@
+name: Sync env to Vercel
+
+# Sync manual, on-demand, de secrets de GitHub → variables de entorno de Vercel.
+# Solo agrega las que FALTAN en Vercel (no pisa las existentes). No deploya.
+# El deploy lo maneja la integración nativa de Vercel en cada push a main.
+on:
+  workflow_dispatch:
+
+env:
+  # No son secretos: son los IDs del proyecto selvoro en Vercel.
+  VERCEL_ORG_ID: team_klaQ4k4O3uyzx9gNCCsGWN91
+  VERCEL_PROJECT_ID: prj_jkHBpnbq4mBSnaVkpAkvufSIzHiB
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Sync missing env vars to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: node .github/scripts/sync-env.mjs
