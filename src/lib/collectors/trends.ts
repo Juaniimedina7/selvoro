@@ -7,6 +7,16 @@ import type { CollectorResult, Signal, TrendsData } from "@/lib/types";
 
 const TRENDS_BASE = "https://trends.google.com/trends/api";
 
+// Sin un User-Agent de navegador real, Google devuelve 429 con mucha más
+// facilidad (lo confirmamos en vivo): el endpoint no es oficial y su
+// detección de bots penaliza clientes que se identifican como script.
+const BROWSER_HEADERS: Record<string, string> = {
+  Accept: "application/json",
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+};
+
 function stripPrefix(text: string): string {
   // Las respuestas de Trends vienen con un prefijo anti-JSON-hijacking: ")]}',\n".
   const idx = text.indexOf("{");
@@ -49,7 +59,7 @@ async function getInterestOverTime(
     `&req=${encodeURIComponent(JSON.stringify(exploreReq))}`;
 
   const exploreRes = await fetch(exploreUrl, {
-    headers: { Accept: "application/json" },
+    headers: BROWSER_HEADERS,
     signal: AbortSignal.timeout(8000),
   });
   if (!exploreRes.ok) return null;
@@ -69,7 +79,7 @@ async function getInterestOverTime(
     `&token=${encodeURIComponent(widget.token)}`;
 
   const iotRes = await fetch(iotUrl, {
-    headers: { Accept: "application/json" },
+    headers: BROWSER_HEADERS,
     signal: AbortSignal.timeout(8000),
   });
   if (!iotRes.ok) return null;
