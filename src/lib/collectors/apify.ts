@@ -10,25 +10,27 @@
 // APIFY_MERCADOLIBRE_ACTOR_ID) porque Apify Store es un marketplace de
 // terceros sin un actor "oficial" único.
 //
-// Verificado EN VIVO (corrida real contra la cuenta de Apify) para 2 de los 4:
-// - amazon -> gio21/amazon-search: input {keyword, domain, maxItems}. Probado
-//   con "termo mate", trajo 3/3 resultados reales con precio/rating/reviews.
+// LOS 4 ESTÁN VERIFICADOS EN VIVO (corrida real contra la cuenta de Apify):
+// - amazon -> gio21/amazon-search: input {keyword, domain, maxItems}.
 // - mercadolibre -> gio21/mercado-libre-scraper: input {keyword, country,
-//   maxItems (>=10, mínimo del actor), maxPages, sort}. OJO: distinto de
-//   gio21/mercado-livre-scraper (con "v", Brasil/mercadolivre.com.br) — ese
-//   NO sirve para Argentina, es fácil confundirlos por el nombre.
+//   maxItems (mínimo 10, restricción del actor), maxPages, sort}. OJO:
+//   distinto de gio21/mercado-livre-scraper (con "v", Brasil/mercadolivre.com.br)
+//   — ese NO sirve para Argentina, es fácil confundirlos por el nombre.
 //   IMPORTANTE (no-determinismo confirmado): el mismo input ("iphone", AR)
 //   devolvió 0 resultados reconocibles en una corrida y 10 en la siguiente,
 //   ambas contra el mismo actor sin cambios — es scraping real, con
 //   protección anti-bot de Mercado Libre que a veces gana. `note` en el
 //   resultado ya cubre este caso ("no devolvió resultados reconocibles"),
-//   pero NO es necesariamente señal de que el producto no existe — el
-//   caller no debería tratar un array vacío acá como "sin competencia".
-// aliexpress/alibaba: NINGÚN actor de búsqueda por keyword disponible entre
-// los revisados (7 actores de gio21) — los únicos actores de Alibaba/1688
-// encontrados son de DETALLE por URL (no keyword search), no encajan con
-// esta arquitectura. Siguen con el payload placeholder ({ search, maxItems })
-// hasta encontrar uno real, y degradan con gracia sin actor configurado.
+//   pero NO es necesariamente señal de que el producto no existe.
+// - aliexpress -> devcake/aliexpress-products-scraper: input {searchQueries
+//   (array), maxProducts (mínimo 50, restricción del actor), sortBy}. Precio
+//   ya viene numérico (priceCurrentMin/Max), no hace falta parsear string.
+// - alibaba -> xtracto/alibaba-search-scraper: input {queries (array),
+//   maxPagesPerQuery (~48 resultados/página)}. Precio viene SOLO como string
+//   de rango (priceFormatted, ej. "$7.57-7.77") — se parsea el primer número
+//   como precio "desde" (parsePriceRange). Sin campo de rating/reviews por
+//   producto (supplierScore/reviewScore son del PROVEEDOR, no del listado
+//   — no se mapean a rating para no mezclar señales distintas).
 //
 // "mercadolibre" acá es un target DISTINTO del collector nativo
 // (collectors/mercadolibre.ts, API oficial de catálogo): sirve solo para
@@ -43,6 +45,7 @@ export type { Marketplace, MarketplaceSearchItem, MarketplaceSearchResult };
 
 const APIFY_API_BASE = "https://api.apify.com/v2";
 const RUN_TIMEOUT_MS = 55_000;
+const ITEMS_PER_ALIBABA_PAGE = 48;
 
 const ACTOR_ENV_VAR: Record<Marketplace, string> = {
   amazon: "APIFY_AMAZON_ACTOR_ID",
@@ -54,6 +57,14 @@ const ACTOR_ENV_VAR: Record<Marketplace, string> = {
   // acceso de la app — ver pipeline.ts). collectMercadoLibre sigue siendo la
   // fuente de cantidad/nombres/categoría.
   mercadolibre: "APIFY_MERCADOLIBRE_ACTOR_ID",
+};
+
+// Mínimo de `maxItems` que cada actor acepta (confirmado en vivo: pedir menos
+// tira HTTP 400 "Input is not valid"). Marketplaces sin entrada acá no
+// tienen mínimo conocido.
+const MIN_ITEMS: Partial<Record<Marketplace, number>> = {
+  mercadolibre: 10,
+  aliexpress: 50,
 };
 
 // Países que gio21/mercado-libre-scraper soporta (17 sitios LatAm
@@ -90,28 +101,47 @@ function pickNumber(item: RawDatasetItem, keys: string[]): number | undefined {
   return undefined;
 }
 
+// Extrae el primer número de un string de precio/rango formateado (ej.
+// "$7.57-7.77", "US $29.99", "$3.50 - $4.20") — usado por xtracto/
+// alibaba-search-scraper, que solo expone `priceFormatted` como texto, sin
+// campo numérico (a diferencia de AliExpress, que sí trae priceCurrentMin).
+function parsePriceRange(formatted: string | undefined): number | undefined {
+  if (!formatted) return undefined;
+  const match = formatted.replace(/,/g, "").match(/(\d+(?:\.\d+)?)/);
+  if (!match) return undefined;
+  const n = Number(match[1]);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 function normalizeItem(raw: RawDatasetItem): MarketplaceSearchItem | null {
   const title = pickString(raw, ["title", "name", "productTitle"]);
   if (!title) return null;
+  // priceCurrentMin (AliExpress, ya numérico) antes que el genérico "price"
+  // — y si ninguno de los dos aparece, parsePriceRange(priceFormatted)
+  // cubre a Alibaba (que solo expone el precio como texto de rango).
+  const price =
+    pickNumber(raw, ["priceCurrentMin", "price", "priceValue", "currentPrice"]) ??
+    parsePriceRange(pickString(raw, ["priceFormatted"]));
   return {
     title,
     url: pickString(raw, ["url", "productUrl", "link"]),
-    price: pickNumber(raw, ["price", "priceValue", "currentPrice"]),
-    currency: pickString(raw, ["currency", "priceCurrency"]),
-    rating: pickNumber(raw, ["rating", "stars", "productRating"]),
-    // "ratingCount" (gio21/amazon-search) y "reviewCount" (gio21/mercado-libre-scraper)
-    // son los nombres reales confirmados en vivo — se mantienen los genéricos
-    // como fallback para actores todavía no verificados (aliexpress/alibaba).
+    price,
+    currency: pickString(raw, ["priceCurrency", "currency"]),
+    rating: pickNumber(raw, ["rating", "ratingValue", "stars", "productRating"]),
+    // "ratingCount" (gio21/amazon-search) y "reviewCount" (gio21/mercado-libre-scraper,
+    // devcake/aliexpress-products-scraper) son los nombres reales confirmados
+    // en vivo. Alibaba (xtracto/alibaba-search-scraper) no expone reviews por
+    // producto — queda undefined ahí, correcto (no hay campo que mapear).
     reviewsCount: pickNumber(raw, ["ratingCount", "reviewCount", "reviewsCount", "reviews", "numberOfReviews"]),
-    imageUrl: pickString(raw, ["imageUrl", "image", "thumbnail"]),
+    imageUrl: pickString(raw, ["imageUrl", "mainImage", "image", "thumbnail"]),
   };
 }
 
 /**
- * Arma el payload de `input` para el actor de cada marketplace. Amazon y
- * Mercado Libre usan el esquema real, confirmado en vivo contra la cuenta de
- * Apify (ver comentario arriba). AliExpress/Alibaba no tienen actor de
- * keyword search verificado todavía — placeholder documentado.
+ * Arma el payload de `input` para el actor de cada marketplace — los 4
+ * esquemas están verificados en vivo contra la cuenta de Apify (ver
+ * comentario de cabecera). `maxItems` ya viene clampeado a MIN_ITEMS por
+ * el caller (searchMarketplace).
  */
 function buildInput(marketplace: Marketplace, query: string, maxItems: number, country: string): Record<string, unknown> {
   switch (marketplace) {
@@ -120,10 +150,12 @@ function buildInput(marketplace: Marketplace, query: string, maxItems: number, c
     case "mercadolibre":
       return { keyword: query, country, maxItems };
     case "aliexpress":
+      return { searchQueries: [query], maxProducts: maxItems };
     case "alibaba":
-      // TODO: sin actor de búsqueda por keyword verificado — ajustar cuando
-      // se elija uno real (ver comentario de cabecera del archivo).
-      return { search: query, maxItems };
+      // Sin parámetro de "cantidad total" directo — cada página trae ~48
+      // resultados, así que se pide la cantidad de páginas necesaria para
+      // cubrir maxItems (el .slice(0, maxItems) final igual acota el output).
+      return { queries: [query], maxPagesPerQuery: Math.max(1, Math.ceil(maxItems / ITEMS_PER_ALIBABA_PAGE)) };
   }
 }
 
@@ -166,7 +198,8 @@ export async function searchMarketplace(
     );
   }
 
-  const input = buildInput(marketplace, query, maxItems, country);
+  const effectiveMaxItems = Math.max(maxItems, MIN_ITEMS[marketplace] ?? 1);
+  const input = buildInput(marketplace, query, effectiveMaxItems, country);
 
   let res: Response;
   try {
