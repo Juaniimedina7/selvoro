@@ -67,6 +67,33 @@ export interface MercadoLibreData {
   note?: string;
 }
 
+/** Marketplaces externos consultables vía Apify (collectors/apify.ts). */
+export type Marketplace = "amazon" | "aliexpress" | "alibaba" | "mercadolibre";
+
+export interface MarketplaceSearchItem {
+  title: string;
+  url?: string;
+  price?: number;
+  currency?: string;
+  rating?: number;
+  reviewsCount?: number;
+  imageUrl?: string;
+}
+
+/**
+ * Resultado de una búsqueda en un marketplace externo (Amazon/AliExpress/
+ * Alibaba) vía Apify. "mercadolibre" acá es un uso interno (recuperar precio
+ * cuando la API oficial no lo expone, ver pipeline.ts) — no aparece como
+ * entrada de `globalMarketplaces` en el reporte.
+ */
+export interface MarketplaceSearchResult {
+  available: boolean;
+  marketplace: Marketplace;
+  query: string;
+  items: MarketplaceSearchItem[];
+  note?: string;
+}
+
 /** Datos de tendencia (Google Trends): mercado local (ar) vs referencia US (us). */
 export interface TrendsData {
   available: boolean;
@@ -167,6 +194,12 @@ export interface AnalysisEvidence {
   mercadoLibre: MercadoLibreData;
   trends: TrendsData;
   metaAds: MetaAdsData;
+  /**
+   * Búsquedas en marketplaces globales (Amazon/AliExpress/Alibaba) vía
+   * Apify, BYOK y opcional — nunca cuenta contra dataCoverageNote/confianza
+   * cuando está vacío (mismo criterio que BuiltWith/Tienda Nube).
+   */
+  globalMarketplaces: MarketplaceSearchResult[];
   score: ScoreResult;
   verdict: Verdict;
   confidence: Confidence;
@@ -182,6 +215,7 @@ export interface Report {
   mercadoLibre: MercadoLibreData;
   trends: TrendsData;
   metaAds: MetaAdsData;
+  globalMarketplaces: MarketplaceSearchResult[];
   score: ScoreResult;
   narrative: ReportNarrative;
   recommendation: Recommendation;

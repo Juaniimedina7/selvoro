@@ -1,3 +1,4 @@
+import { searchMarketplace } from "@/lib/collectors/apify";
 import { collectMercadoLibre } from "@/lib/collectors/mercadolibre";
 import { collectMetaAds } from "@/lib/collectors/meta-ads";
 import { collectTrends } from "@/lib/collectors/trends";
@@ -7,6 +8,8 @@ import { computeScore, deriveVerdict } from "@/lib/scoring/engine";
 import type {
   AnalysisEvidence,
   AnalyzeInput,
+  Marketplace,
+  MarketplaceSearchResult,
   MercadoLibreData,
   MetaAdsData,
   Report,
@@ -51,6 +54,40 @@ const EMPTY_META_ADS: MetaAdsData = {
   note: "Collector no ejecutado.",
 };
 
+// Marketplaces globales que entran al reporte como `globalMarketplaces`
+// (evidencia + señal de competencia/margen). "mercadolibre" NO está acá: se
+// usa aparte, solo para recuperar precio (ver mergeMlPrice más abajo).
+const GLOBAL_MARKETPLACES: Marketplace[] = ["amazon", "aliexpress", "alibaba"];
+
+/** Min/max/mediana a partir de los items con precio real de un resultado de Apify. */
+function priceStats(items: MarketplaceSearchResult["items"]): { min: number; max: number; median: number; currency: string | null } | null {
+  const prices = items.map((i) => i.price).filter((p): p is number => typeof p === "number" && p > 0);
+  if (prices.length === 0) return null;
+  const sorted = [...prices].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 !== 0 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+  return { min: sorted[0], max: sorted[sorted.length - 1], median, currency: items.find((i) => i.currency)?.currency ?? null };
+}
+
+/**
+ * Completa priceMin/Max/Median/currency de un MercadoLibreData (que la API
+ * oficial de catálogo deja en null, ver collectors/mercadolibre.ts) con el
+ * resultado de un scraping de precio vía Apify. No pisa totalListings/
+ * sampleTitles/note, que sí vienen de la API oficial.
+ */
+function mergeMlPrice(ml: MercadoLibreData, priceResult: MarketplaceSearchResult): MercadoLibreData {
+  if (!priceResult.available) return ml;
+  const stats = priceStats(priceResult.items);
+  if (!stats) return ml;
+  return {
+    ...ml,
+    priceMin: stats.min,
+    priceMax: stats.max,
+    priceMedian: stats.median,
+    currency: stats.currency ?? ml.currency,
+  };
+}
+
 export async function gatherEvidence(
   input: AnalyzeInput,
   opts?: { clerkUserId?: string },
@@ -65,14 +102,18 @@ export async function gatherEvidence(
   // credential "de plataforma" (PLATFORM_CREDENTIALS_CLERK_USER_ID) antes de
   // degradar — evita que cada usuario tenga que conectar su propia cuenta
   // solo para tener resultados de Mercado Libre.
-  const [metaAdsCredential, mlSellerCredential] = await Promise.all([
+  // Apify (Amazon/AliExpress/Alibaba + precio de ML) es BYOK, igual que Meta
+  // Ads — sin usuario o sin credential cargado, searchMarketplace degrada
+  // con gracia por sí solo (no hace falta chequear acá).
+  const [metaAdsCredential, mlSellerCredential, apifyCredential] = await Promise.all([
     opts?.clerkUserId ? getUserCredential(opts.clerkUserId, "meta_ads") : null,
     getUserOrPlatformCredential(opts?.clerkUserId, "mercadolibre_seller"),
+    opts?.clerkUserId ? getUserCredential(opts.clerkUserId, "apify") : null,
   ]);
 
   // 1. Recolección en paralelo (cada collector degrada con gracia).
   //    input.market es el mercado LOCAL; US se usa siempre como referencia.
-  const [mlResult, trendsResult, metaAdsResult] = await Promise.all([
+  const [mlResult, trendsResult, metaAdsResult, mlPriceResult, ...globalMarketplaceResults] = await Promise.all([
     collectMercadoLibre(input.query, input.market, mlSellerCredential?.accessToken),
     collectTrends(input.query, input.market, input.dateFrom, input.dateTo),
     collectMetaAds(
@@ -82,16 +123,21 @@ export async function gatherEvidence(
       input.dateFrom,
       input.dateTo,
     ),
+    searchMarketplace("mercadolibre", input.query, apifyCredential?.apiToken),
+    ...GLOBAL_MARKETPLACES.map((marketplace) =>
+      searchMarketplace(marketplace, input.query, apifyCredential?.apiToken),
+    ),
   ]);
 
-  const ml = (mlResult.raw?.mercadoLibre as MercadoLibreData) ?? EMPTY_ML;
+  const ml = mergeMlPrice((mlResult.raw?.mercadoLibre as MercadoLibreData) ?? EMPTY_ML, mlPriceResult);
   const trends = (trendsResult.raw?.trends as TrendsData) ?? EMPTY_TRENDS;
   const metaAds = (metaAdsResult.raw?.metaAds as MetaAdsData) ?? EMPTY_META_ADS;
+  const globalMarketplaces = globalMarketplaceResults;
 
   const signals: Signal[] = [...mlResult.signals, ...trendsResult.signals, ...metaAdsResult.signals];
 
   // 2. Scoring explicable (determinista, sin LLM).
-  const score = computeScore(ml, trends, metaAds, input);
+  const score = computeScore(ml, trends, metaAds, input, globalMarketplaces);
   const { verdict, confidence } = deriveVerdict(score);
 
   // 3. Nota de cobertura honesta.
@@ -113,6 +159,7 @@ export async function gatherEvidence(
     mercadoLibre: ml,
     trends,
     metaAds,
+    globalMarketplaces,
     score,
     verdict,
     confidence,
@@ -132,6 +179,7 @@ export async function runAnalysis(
     ml: evidence.mercadoLibre,
     trends: evidence.trends,
     metaAds: evidence.metaAds,
+    globalMarketplaces: evidence.globalMarketplaces,
     score: evidence.score,
     verdict: evidence.verdict,
   });
@@ -143,6 +191,7 @@ export async function runAnalysis(
     mercadoLibre: evidence.mercadoLibre,
     trends: evidence.trends,
     metaAds: evidence.metaAds,
+    globalMarketplaces: evidence.globalMarketplaces,
     score: evidence.score,
     narrative,
     recommendation: {

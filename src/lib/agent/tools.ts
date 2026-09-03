@@ -354,16 +354,22 @@ const metaAdsSnapshotTool: ToolDef<z.infer<typeof metaAdsSnapshotSchema>> = {
 
 const searchMarketplaceProductsSchema = z.object({
   query: z.string().min(2).describe("Término de búsqueda (nombre de producto, categoría, etc.)."),
-  marketplace: z.enum(["amazon", "aliexpress"]).describe("Marketplace externo a buscar."),
+  marketplace: z
+    .enum(["amazon", "aliexpress", "alibaba", "mercadolibre"])
+    .describe(
+      "Marketplace externo a buscar. \"mercadolibre\" acá es solo para precio vía scraping (la API oficial " +
+        "de analyze_product no lo expone) — para cantidad/competidores de ML usá analyze_product.",
+    ),
   maxItems: z.number().int().positive().max(20).optional().describe("Cantidad de resultados a traer (default 10, máximo 20)."),
 });
 
 const searchMarketplaceProductsTool: ToolDef<z.infer<typeof searchMarketplaceProductsSchema>> = {
   name: "search_marketplace_products",
-  title: "Buscar productos en Amazon/AliExpress",
+  title: "Buscar productos en Amazon/AliExpress/Alibaba/Mercado Libre (precio)",
   description:
-    "Busca productos reales en Amazon o AliExpress vía un actor de Apify (scraper), usando el API token que el " +
-    "usuario cargó en Configuración → Integraciones. Datos crudos sin scoring (título, precio, rating, url) — " +
+    "Busca productos reales en Amazon, AliExpress, Alibaba, o precio en Mercado Libre, vía un actor de Apify " +
+    "(scraper), usando el API token que el usuario cargó en Configuración → Integraciones. Datos crudos sin " +
+    "scoring (título, precio, rating, url) — " +
     "no está integrado al scoring de analyze_product todavía. Requiere que el usuario tenga cuenta de Apify y " +
     "que el servidor tenga configurado el actor a usar para ese marketplace; si falta cualquiera de los dos, lo " +
     "indica explícitamente en vez de fallar.",

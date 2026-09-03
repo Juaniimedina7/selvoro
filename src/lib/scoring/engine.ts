@@ -3,6 +3,7 @@ import type {
   AnalyzeInput,
   Confidence,
   DimensionScore,
+  MarketplaceSearchResult,
   MercadoLibreData,
   MetaAdsData,
   MetaAdsMarketData,
@@ -49,9 +50,19 @@ interface Ctx {
   trends: TrendsData;
   metaAds: MetaAdsData;
   input: AnalyzeInput;
+  /** Amazon/AliExpress/Alibaba vía Apify — BYOK, opcional, casi siempre []. */
+  globalMarketplaces: MarketplaceSearchResult[];
 }
 
 type DimEval = { value: number; confidence: Confidence; evidence: string };
+
+/** Precio más bajo con dato real entre los items de un marketplace dado (o null si no hay). */
+function cheapestPrice(results: MarketplaceSearchResult[], marketplace: MarketplaceSearchResult["marketplace"]): number | null {
+  const result = results.find((r) => r.marketplace === marketplace && r.available);
+  if (!result) return null;
+  const prices = result.items.map((i) => i.price).filter((p): p is number => typeof p === "number" && p > 0);
+  return prices.length ? Math.min(...prices) : null;
+}
 
 function evalDemanda({ trends, ml }: Ctx): DimEval {
   if (!trends.available && !ml.available) {
@@ -92,12 +103,18 @@ function evalDemanda({ trends, ml }: Ctx): DimEval {
   };
 }
 
-function evalCompetencia({ ml }: Ctx): DimEval {
+function evalCompetencia({ ml, globalMarketplaces }: Ctx): DimEval {
+  const amazon = globalMarketplaces.find((r) => r.marketplace === "amazon" && r.available);
+  // Solo informativo: cuántos resultados trajo Amazon para el mismo término.
+  // No es competencia LOCAL (es un mercado distinto), así que nunca pesa más
+  // que la señal de ML — solo se agrega como contexto extra cuando hay dato.
+  const amazonNote = amazon ? ` Amazon (referencia global): ${amazon.items.length} resultados.` : "";
+
   if (!ml.available || ml.totalListings == null) {
     return {
       value: 50,
       confidence: "baja",
-      evidence: "Sin datos de Mercado Libre: competencia local no verificable.",
+      evidence: `Sin datos de Mercado Libre: competencia local no verificable.${amazonNote}`,
     };
   }
   // Más competencia = peor para 'competencia' (score alto = poca competencia = oportunidad).
@@ -114,7 +131,7 @@ function evalCompetencia({ ml }: Ctx): DimEval {
     score = 25;
     ev = `${t} publicaciones: competencia local alta.`;
   }
-  return { value: score, confidence: "media", evidence: ev };
+  return { value: score, confidence: "media", evidence: ev + amazonNote };
 }
 
 function evalSaturacion({ ml, metaAds }: Ctx): DimEval {
@@ -267,27 +284,55 @@ function evalOportunidadLocal({ trends }: Ctx): DimEval {
   return { value: score, confidence: "media", evidence: ev };
 }
 
-function evalMargen({ ml, input }: Ctx): DimEval {
+function evalMargen({ ml, input, globalMarketplaces }: Ctx): DimEval {
+  // Costo de origen: el más barato entre Alibaba/AliExpress (sourcing/wholesale),
+  // cuando el usuario tiene Apify configurado. Sin esto, seguimos sin costo de
+  // base real (mismo comportamiento que antes de esta integración).
+  const costBasis = cheapestPrice(globalMarketplaces, "alibaba") ?? cheapestPrice(globalMarketplaces, "aliexpress");
+
   if (!ml.available || ml.priceMedian == null) {
+    if (costBasis == null) {
+      return {
+        value: 50,
+        confidence: "baja",
+        evidence: "Sin precio local ni costo de origen de referencia: margen no estimable.",
+      };
+    }
     return {
       value: 50,
       confidence: "baja",
-      evidence:
-        "Sin precio local de referencia: margen no estimable. (El costo de origen se agrega en fase 2.)",
+      evidence: `Costo de origen de referencia (Alibaba/AliExpress): US$${costBasis}. Sin precio local en Mercado Libre para comparar: margen no estimable igual.`,
     };
   }
-  // Estimación gruesa: si hay ticket objetivo, comparamos contra precio local.
+
   let ev = `Precio mediano local: ${ml.priceMedian} ${ml.currency ?? ""}.`;
   let score = 50;
-  if (input.ticketUsd) {
+  let confidence: Confidence = "baja";
+
+  if (costBasis != null && input.ticketUsd) {
+    // Con costo de origen y ticket objetivo, sí hay una estimación de margen bruto real
+    // (sin flete/aduana/comisiones — se aclara explícitamente, no es rentabilidad neta).
+    const grossMarginUsd = input.ticketUsd - costBasis;
+    const grossMarginPct = input.ticketUsd > 0 ? Math.round((grossMarginUsd / input.ticketUsd) * 100) : null;
+    ev += ` Costo de origen (Alibaba/AliExpress): US$${costBasis}. Ticket objetivo: US$${input.ticketUsd}.`;
+    ev += grossMarginPct != null
+      ? ` Margen bruto estimado: ~${grossMarginPct}% (US$${grossMarginUsd.toFixed(2)}), SIN flete, aduana ni comisiones — no es rentabilidad neta.`
+      : "";
+    if (grossMarginPct != null && grossMarginPct >= 50) score = 75;
+    else if (grossMarginPct != null && grossMarginPct >= 25) score = 60;
+    else if (grossMarginPct != null && grossMarginPct >= 0) score = 45;
+    else score = 20;
+    confidence = "media";
+  } else if (input.ticketUsd) {
     ev += ` Ticket objetivo: US$${input.ticketUsd}.`;
-    // Sin tipo de cambio ni costo de origen reales, mantenemos confianza baja.
+    // Sin costo de origen real, mantenemos confianza baja (comportamiento previo).
     score = 55;
   }
+
   return {
     value: score,
-    confidence: "baja",
-    evidence: ev + " Estimación, no rentabilidad real.",
+    confidence,
+    evidence: ev + (confidence === "baja" ? " Estimación, no rentabilidad real." : ""),
   };
 }
 
@@ -343,8 +388,9 @@ export function computeScore(
   trends: TrendsData,
   metaAds: MetaAdsData,
   input: AnalyzeInput,
+  globalMarketplaces: MarketplaceSearchResult[] = [],
 ): ScoreResult {
-  const ctx: Ctx = { ml, trends, metaAds, input };
+  const ctx: Ctx = { ml, trends, metaAds, input, globalMarketplaces };
   // Etiquetas dinámicas: el mercado local depende de input.market (no siempre AR).
   const home = COUNTRIES.find((c) => c.code === input.market)?.label ?? input.market;
   const labels: Record<ScoreDimension, string> = {

@@ -1,6 +1,7 @@
 import { getLlm } from "@/lib/llm/client";
 import type {
   AnalyzeInput,
+  MarketplaceSearchResult,
   MercadoLibreData,
   MetaAdsData,
   ReportNarrative,
@@ -68,10 +69,11 @@ export async function generateNarrative(params: {
   ml: MercadoLibreData;
   trends: TrendsData;
   metaAds: MetaAdsData;
+  globalMarketplaces: MarketplaceSearchResult[];
   score: ScoreResult;
   verdict: string;
 }): Promise<ReportNarrative> {
-  const { input, ml, trends, metaAds, score, verdict } = params;
+  const { input, ml, trends, metaAds, globalMarketplaces, score, verdict } = params;
 
   const evidence = {
     producto: input.query,
@@ -80,6 +82,9 @@ export async function generateNarrative(params: {
     mercadoLibre: ml,
     tendencias: trends,
     anunciosMeta: metaAds,
+    // BYOK/opcional (Apify) — casi siempre []. Cuando hay datos, son precios
+    // de referencia global (Amazon/AliExpress/Alibaba), NUNCA ventas/ROAS.
+    marketplacesGlobales: globalMarketplaces,
     scoring: {
       compuesto: score.composite,
       banda: score.compositeBand,

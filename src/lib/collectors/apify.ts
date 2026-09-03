@@ -21,28 +21,12 @@
 // pipeline.ts usa este resultado para backfillear priceMin/Max/Median del
 // MercadoLibreData nativo, no lo reemplaza.
 
+import type { Marketplace, MarketplaceSearchItem, MarketplaceSearchResult } from "@/lib/types";
+
+export type { Marketplace, MarketplaceSearchItem, MarketplaceSearchResult };
+
 const APIFY_API_BASE = "https://api.apify.com/v2";
 const RUN_TIMEOUT_MS = 55_000;
-
-export type Marketplace = "amazon" | "aliexpress" | "alibaba" | "mercadolibre";
-
-export interface MarketplaceSearchItem {
-  title: string;
-  url?: string;
-  price?: number;
-  currency?: string;
-  rating?: number;
-  reviewsCount?: number;
-  imageUrl?: string;
-}
-
-export interface MarketplaceSearchResult {
-  available: boolean;
-  marketplace: Marketplace;
-  query: string;
-  items: MarketplaceSearchItem[];
-  note?: string;
-}
 
 const ACTOR_ENV_VAR: Record<Marketplace, string> = {
   amazon: "APIFY_AMAZON_ACTOR_ID",

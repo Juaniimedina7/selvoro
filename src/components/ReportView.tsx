@@ -194,6 +194,38 @@ export function ReportView({ report }: { report: Report }) {
         </Section>
       )}
 
+      {/* Marketplaces globales (Amazon/AliExpress/Alibaba, BYOK vía Apify) */}
+      {report.globalMarketplaces.some((m) => m.available && m.items.length > 0) && (
+        <Section title="Marketplaces globales (referencia)">
+          <div style={{ fontSize: 13.5, color: "var(--text)", lineHeight: 1.7 }}>
+            <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "0 0 8px" }}>
+              Precios de referencia en otros mercados/plataformas — no son datos de venta ni de
+              rentabilidad local.
+            </p>
+            {report.globalMarketplaces
+              .filter((m) => m.available && m.items.length > 0)
+              .map((m) => {
+                const prices = m.items
+                  .map((i) => i.price)
+                  .filter((p): p is number => typeof p === "number" && p > 0);
+                return (
+                  <div key={m.marketplace} style={{ marginBottom: 8 }}>
+                    <strong style={{ textTransform: "capitalize" }}>{m.marketplace}</strong>:{" "}
+                    {m.items.length} resultado(s)
+                    {prices.length > 0 && (
+                      <>
+                        {" "}
+                        — precio {Math.min(...prices)} – {Math.max(...prices)}{" "}
+                        {m.items.find((i) => i.currency)?.currency ?? ""}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </Section>
+      )}
+
       <Section title="Fuentes utilizadas">
         <BulletList items={report.sources} />
       </Section>
