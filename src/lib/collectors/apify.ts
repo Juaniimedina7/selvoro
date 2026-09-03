@@ -1,21 +1,30 @@
-// Búsqueda de productos en marketplaces externos (Amazon, AliExpress) vía
-// Apify. BYOK (mismo criterio que meta-ads.ts): el apiToken es del usuario,
-// cada corrida de actor tiene costo real que paga su cuenta de Apify, no la
-// nuestra. Degrada con gracia sin token o sin actor configurado — nunca
-// lanza, mismo patrón que el resto de los collectors.
+// Búsqueda de productos en marketplaces externos (Amazon, AliExpress,
+// Alibaba, y precio de Mercado Libre) vía Apify. BYOK (mismo criterio que
+// meta-ads.ts): el apiToken es del usuario, cada corrida de actor tiene
+// costo real que paga su cuenta de Apify, no la nuestra. Degrada con gracia
+// sin token o sin actor configurado — nunca lanza, mismo patrón que el
+// resto de los collectors.
 //
 // Los Actor IDs se configuran server-side por env var (APIFY_AMAZON_ACTOR_ID
-// / APIFY_ALIEXPRESS_ACTOR_ID) porque Apify Store es un marketplace de
+// / APIFY_ALIEXPRESS_ACTOR_ID / APIFY_ALIBABA_ACTOR_ID /
+// APIFY_MERCADOLIBRE_ACTOR_ID) porque Apify Store es un marketplace de
 // terceros sin un actor "oficial" único — el operador elige cuál usar.
 // IMPORTANTE: el payload de `input` de abajo asume campos genéricos
 // (`search`, `maxItems`) que HAY QUE AJUSTAR leyendo el README del actor
 // elegido una vez que exista cuenta — el nombre real del campo de búsqueda
 // varía por actor y no se puede verificar sin una.
+//
+// "mercadolibre" acá es un target DISTINTO del collector nativo
+// (collectors/mercadolibre.ts, API oficial de catálogo): sirve solo para
+// recuperar PRECIO vía scraping, porque la API oficial no lo expone con el
+// nivel de acceso de la app (buy_box_winner viene null, confirmado en vivo).
+// pipeline.ts usa este resultado para backfillear priceMin/Max/Median del
+// MercadoLibreData nativo, no lo reemplaza.
 
 const APIFY_API_BASE = "https://api.apify.com/v2";
 const RUN_TIMEOUT_MS = 55_000;
 
-export type Marketplace = "amazon" | "aliexpress";
+export type Marketplace = "amazon" | "aliexpress" | "alibaba" | "mercadolibre";
 
 export interface MarketplaceSearchItem {
   title: string;
@@ -38,6 +47,13 @@ export interface MarketplaceSearchResult {
 const ACTOR_ENV_VAR: Record<Marketplace, string> = {
   amazon: "APIFY_AMAZON_ACTOR_ID",
   aliexpress: "APIFY_ALIEXPRESS_ACTOR_ID",
+  alibaba: "APIFY_ALIBABA_ACTOR_ID",
+  // Distinto del ML_ACCESS_TOKEN/mercadolibre_seller (API oficial, collectors/
+  // mercadolibre.ts): esto es SOLO para recuperar precio vía scraping cuando
+  // la API oficial no lo expone (buy_box_winner viene null con el nivel de
+  // acceso de la app — ver pipeline.ts). collectMercadoLibre sigue siendo la
+  // fuente de cantidad/nombres/categoría.
+  mercadolibre: "APIFY_MERCADOLIBRE_ACTOR_ID",
 };
 
 function degraded(marketplace: Marketplace, query: string, note: string): MarketplaceSearchResult {
