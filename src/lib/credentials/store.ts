@@ -45,6 +45,29 @@ export async function getUserCredential(
   return value;
 }
 
+/**
+ * Como getUserCredential, pero si el usuario no conectó el provider, cae a
+ * un credential "de plataforma" (el que conectó el admin en
+ * PLATFORM_CREDENTIALS_CLERK_USER_ID). Solo tiene sentido para fuentes cuyo
+ * dato es público/de mercado y el credential es únicamente un requisito de
+ * autenticación (ej. la búsqueda general de Mercado Libre) — nunca usar esto
+ * para herramientas que muestran datos DE LA CUENTA conectada (ej.
+ * mercadolibre_seller_snapshot, tienda_nube_snapshot), porque ahí sí importa
+ * de quién es la cuenta.
+ */
+export async function getUserOrPlatformCredential(
+  clerkUserId: string | undefined,
+  providerId: string,
+): Promise<Record<string, string> | null> {
+  if (clerkUserId) {
+    const own = await getUserCredential(clerkUserId, providerId);
+    if (own) return own;
+  }
+  const platformUserId = process.env.PLATFORM_CREDENTIALS_CLERK_USER_ID?.trim();
+  if (!platformUserId || platformUserId === clerkUserId) return null;
+  return getUserCredential(platformUserId, providerId);
+}
+
 /** Valida contra provider.verify() y recién ahí guarda cifrado. Solo para providers "manual". Lanza si no valida. */
 export async function setUserCredential(
   clerkUserId: string,

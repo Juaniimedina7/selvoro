@@ -1,7 +1,7 @@
 import { collectMercadoLibre } from "@/lib/collectors/mercadolibre";
 import { collectMetaAds } from "@/lib/collectors/meta-ads";
 import { collectTrends } from "@/lib/collectors/trends";
-import { getUserCredential } from "@/lib/credentials/store";
+import { getUserCredential, getUserOrPlatformCredential } from "@/lib/credentials/store";
 import { generateNarrative } from "@/lib/report/generate";
 import { computeScore, deriveVerdict } from "@/lib/scoring/engine";
 import type {
@@ -57,16 +57,18 @@ export async function gatherEvidence(
 ): Promise<AnalysisEvidence> {
   // Meta Ad Library es BYOK (credential por usuario, ver src/lib/credentials/).
   // Sin usuario o sin credential cargado, el collector degrada con gracia.
-  // Mercado Libre: ML dejó de aceptar búsquedas anónimas (403 sin token) — si
-  // no hay ML_ACCESS_TOKEN de servidor, usamos el access token que el usuario
-  // conectó como vendedor de ML (mismo BYOK que ya existe para
-  // mercadolibre_seller_snapshot), así el collector funciona igual.
-  const [metaAdsCredential, mlSellerCredential] = opts?.clerkUserId
-    ? await Promise.all([
-        getUserCredential(opts.clerkUserId, "meta_ads"),
-        getUserCredential(opts.clerkUserId, "mercadolibre_seller"),
-      ])
-    : [null, null];
+  // Mercado Libre: ML dejó de aceptar búsquedas anónimas (403 sin token). La
+  // búsqueda es de datos PÚBLICOS del marketplace (no de la cuenta conectada,
+  // a diferencia de mercadolibre_seller_snapshot) — el token ahí es solo un
+  // requisito de autenticación, así que cualquier cuenta de ML sirve para
+  // cualquier usuario. Por eso, si el usuario no conectó la suya, caemos al
+  // credential "de plataforma" (PLATFORM_CREDENTIALS_CLERK_USER_ID) antes de
+  // degradar — evita que cada usuario tenga que conectar su propia cuenta
+  // solo para tener resultados de Mercado Libre.
+  const [metaAdsCredential, mlSellerCredential] = await Promise.all([
+    opts?.clerkUserId ? getUserCredential(opts.clerkUserId, "meta_ads") : null,
+    getUserOrPlatformCredential(opts?.clerkUserId, "mercadolibre_seller"),
+  ]);
 
   // 1. Recolección en paralelo (cada collector degrada con gracia).
   //    input.market es el mercado LOCAL; US se usa siempre como referencia.

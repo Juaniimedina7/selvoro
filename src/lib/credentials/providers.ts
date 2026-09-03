@@ -1,4 +1,5 @@
 import { verifyMetaAdsAccessToken } from "@/lib/collectors/meta-ads";
+import { verifyApifyApiToken } from "@/lib/collectors/apify";
 import { tiendaNubeProvider } from "@/lib/credentials/oauth/tiendaNube";
 import { mercadoLibreSellerProvider } from "@/lib/credentials/oauth/mercadoLibreSeller";
 
@@ -70,8 +71,26 @@ const metaAdsProvider: ManualCredentialProvider = {
   },
 };
 
+const apifyProvider: ManualCredentialProvider = {
+  authType: "manual",
+  id: "apify",
+  label: "Apify (scraper de marketplaces)",
+  description:
+    "Requiere una cuenta en apify.com y su API token (Console → Integrations). Habilita búsqueda de productos " +
+    "en Amazon/AliExpress vía actors de Apify Store. Cada corrida de scraping tiene costo real, se cobra a tu " +
+    "cuenta de Apify, no a Selvoro.",
+  helpUrl: "https://docs.apify.com/api/v2",
+  fields: [{ key: "apiToken", label: "API Token", placeholder: "apify_api_..." }],
+  verify: async (value) => {
+    const token = value.apiToken?.trim();
+    if (!token) return { ok: false, message: "Falta el API token." };
+    return verifyApifyApiToken(token);
+  },
+};
+
 export const CREDENTIAL_PROVIDERS: CredentialProvider[] = [
   metaAdsProvider,
+  apifyProvider,
   tiendaNubeProvider,
   mercadoLibreSellerProvider,
 ];

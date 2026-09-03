@@ -5,6 +5,8 @@ import { getTiendaNubeSnapshot } from "@/lib/collectors/tiendanube-store";
 import { getMercadoLibreSellerSnapshot } from "@/lib/collectors/mercadolibre-seller";
 import { lookupTechStack } from "@/lib/collectors/builtwith";
 import { collectMetaAds } from "@/lib/collectors/meta-ads";
+import { searchMarketplace } from "@/lib/collectors/apify";
+import { scrapePublicPage } from "@/lib/collectors/webpage";
 import type { MetaAdsData } from "@/lib/types";
 import { compareMarkets } from "@/lib/report/compareMarkets";
 import { generateTestBrief } from "@/lib/report/generateTestBrief";
@@ -350,6 +352,46 @@ const metaAdsSnapshotTool: ToolDef<z.infer<typeof metaAdsSnapshotSchema>> = {
   },
 };
 
+const searchMarketplaceProductsSchema = z.object({
+  query: z.string().min(2).describe("Término de búsqueda (nombre de producto, categoría, etc.)."),
+  marketplace: z.enum(["amazon", "aliexpress"]).describe("Marketplace externo a buscar."),
+  maxItems: z.number().int().positive().max(20).optional().describe("Cantidad de resultados a traer (default 10, máximo 20)."),
+});
+
+const searchMarketplaceProductsTool: ToolDef<z.infer<typeof searchMarketplaceProductsSchema>> = {
+  name: "search_marketplace_products",
+  title: "Buscar productos en Amazon/AliExpress",
+  description:
+    "Busca productos reales en Amazon o AliExpress vía un actor de Apify (scraper), usando el API token que el " +
+    "usuario cargó en Configuración → Integraciones. Datos crudos sin scoring (título, precio, rating, url) — " +
+    "no está integrado al scoring de analyze_product todavía. Requiere que el usuario tenga cuenta de Apify y " +
+    "que el servidor tenga configurado el actor a usar para ese marketplace; si falta cualquiera de los dos, lo " +
+    "indica explícitamente en vez de fallar.",
+  schema: searchMarketplaceProductsSchema,
+  handler: async (ctx, input) => {
+    const cred = await getUserCredential(ctx.clerkUserId, "apify");
+    return searchMarketplace(input.marketplace, input.query, cred?.apiToken, input.maxItems);
+  },
+};
+
+const scrapeCompetitorPageSchema = z.object({
+  url: z.string().url().describe("URL pública de una página de producto o tienda (ej. una tienda de Tienda Nube, Shopify u otra plataforma)."),
+});
+
+const scrapeCompetitorPageTool: ToolDef<z.infer<typeof scrapeCompetitorPageSchema>> = {
+  name: "scrape_competitor_page",
+  title: "Leer página pública de un competidor",
+  description:
+    "Lee una URL pública (tienda de Tienda Nube, Shopify, u otro sitio) sin necesitar cuenta ni credenciales: " +
+    "extrae título, descripción y datos de producto (nombre, precio, moneda, disponibilidad) si la página expone " +
+    "datos estructurados schema.org/Product. Es la forma de ver competencia en Tienda Nube, que no tiene una API " +
+    "de búsqueda pública tipo marketplace (es federada: cada tienda es su propio dominio) — hay que darle la URL " +
+    "puntual del competidor. No ejecuta JavaScript: sitios armados como SPA sin datos estructurados devuelven " +
+    "poco o nada, indicado explícitamente en vez de fallar.",
+  schema: scrapeCompetitorPageSchema,
+  handler: async (_ctx, input) => scrapePublicPage(input.url),
+};
+
 export const AGENT_TOOLS: ToolDef<unknown>[] = [
   analyzeProduct,
   getReport,
@@ -364,4 +406,6 @@ export const AGENT_TOOLS: ToolDef<unknown>[] = [
   listAnalysesTool,
   getAnalysisTool,
   metaAdsSnapshotTool,
+  searchMarketplaceProductsTool,
+  scrapeCompetitorPageTool,
 ] as unknown as ToolDef<unknown>[];

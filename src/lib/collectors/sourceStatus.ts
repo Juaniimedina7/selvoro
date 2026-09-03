@@ -15,6 +15,7 @@ export interface SourceStatus {
 
 export async function getSourceStatuses(clerkUserId?: string): Promise<SourceStatus[]> {
   const metaCredential = clerkUserId ? await getUserCredential(clerkUserId, "meta_ads") : null;
+  const apifyCredential = clerkUserId ? await getUserCredential(clerkUserId, "apify") : null;
 
   return [
     {
@@ -44,6 +45,18 @@ export async function getSourceStatuses(clerkUserId?: string): Promise<SourceSta
       label: "TikTok Creative Center",
       status: "no_disponible",
       note: "Sin API oficial. Omitido en esta fase del producto (decisión de producto, no falta de configuración).",
+    },
+    {
+      key: "apify",
+      label: "Apify (Amazon/AliExpress)",
+      status:
+        apifyCredential?.apiToken && (process.env.APIFY_AMAZON_ACTOR_ID || process.env.APIFY_ALIEXPRESS_ACTOR_ID)
+          ? "activa"
+          : "no_disponible",
+      note: apifyCredential?.apiToken
+        ? "Token propio configurado en Configuración → Integraciones. Requiere además que el servidor tenga " +
+          "APIFY_AMAZON_ACTOR_ID / APIFY_ALIEXPRESS_ACTOR_ID configurados."
+        : "Requiere que cargues tu propio API token de Apify en Configuración → Integraciones (necesitás cuenta en apify.com).",
     },
   ];
 }
