@@ -12,6 +12,17 @@ const DATA_SOURCES = [
   { label: "BuiltWith", tag: "pública", desc: "El stack tecnológico de la tienda de un competidor puntual." },
 ];
 
+const INTEGRATED_BRANDS = [
+  "Mercado Libre",
+  "Google Trends",
+  "Meta Ads",
+  "Amazon",
+  "AliExpress",
+  "Alibaba",
+  "BuiltWith",
+  "Tienda Nube",
+];
+
 const TOOLS = [
   { label: "Analizar un producto", desc: "Score de 9 dimensiones con la evidencia real detrás de cada número." },
   { label: "Comparar AR vs US", desc: "Tendencia de búsqueda y anuncios activos, los dos mercados lado a lado." },
@@ -191,6 +202,38 @@ export default async function Home() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ===================== MARCAS INTEGRADAS ===================== */}
+      <section className="s-wrap" style={{ padding: "40px 0" }}>
+        <p className="s-eyebrow" style={{ display: "block", textAlign: "center", marginBottom: 20 }}>
+          Datos de
+        </p>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: "16px 40px",
+          }}
+        >
+          {INTEGRATED_BRANDS.map((brand) => (
+            <span
+              key={brand}
+              style={{
+                fontFamily: "var(--font-display)",
+                fontSize: 16,
+                fontWeight: 600,
+                color: "var(--muted)",
+                letterSpacing: "-0.01em",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {brand}
+            </span>
+          ))}
         </div>
       </section>
 

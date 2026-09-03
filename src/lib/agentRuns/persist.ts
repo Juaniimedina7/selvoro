@@ -2,15 +2,16 @@ import { prisma } from "@/lib/db/prisma";
 import type { AgentRunKind, AgentRunSource } from "@prisma/client";
 
 /**
- * Persiste un resultado de analyze_product / compare_markets / search_products
- * disparado desde el chat o el MCP. Nunca lanza: es un side effect best-effort
- * (si falla, la tool ya respondió al usuario/agente igual) — el try/catch vive
- * ACÁ ADENTRO para que ningún caller futuro pueda olvidarse de envolverlo.
+ * Persiste un resultado de analyze_product / compare_markets / search_products /
+ * search_marketplace_products disparado desde el chat o el MCP. Nunca
+ * lanza: es un side effect best-effort (si falla, la tool ya respondió al
+ * usuario/agente igual) — el try/catch vive ACÁ ADENTRO para que ningún
+ * caller futuro pueda olvidarse de envolverlo.
  */
 export async function persistAgentRun(params: {
   clerkUserId: string;
   source: "chat" | "mcp";
-  kind: "ANALYZE" | "COMPARE" | "SEARCH";
+  kind: "ANALYZE" | "COMPARE" | "SEARCH" | "MARKETPLACE_SEARCH";
   query: string;
   market?: string | null;
   ticketUsd?: number | null;

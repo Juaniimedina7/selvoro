@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "AgentRunKind" ADD VALUE 'MARKETPLACE_SEARCH';

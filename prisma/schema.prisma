@@ -131,6 +131,7 @@ enum AgentRunKind {
   ANALYZE
   COMPARE
   SEARCH
+  MARKETPLACE_SEARCH
 }
 
 enum AgentRunSource {
@@ -138,12 +139,15 @@ enum AgentRunSource {
   MCP
 }
 
-/// Persiste analyze_product / compare_markets / search_products disparados
-/// desde el chat o el MCP (Report solo guarda corridas del formulario web,
-/// con narrativa). payload guarda el objeto de dominio completo según kind:
-/// AnalysisEvidence (ANALYZE), MarketComparison (COMPARE) o
-/// SearchProductsResult sin resumir (SEARCH). verdict/confidence/compositeScore
-/// quedan null para COMPARE; para SEARCH se denormaliza el mejor candidato.
+/// Persiste analyze_product / compare_markets / search_products /
+/// search_marketplace_products disparados desde el chat o el MCP (Report
+/// solo guarda corridas del formulario web, con narrativa). payload guarda
+/// el objeto de dominio completo según kind: AnalysisEvidence (ANALYZE),
+/// MarketComparison (COMPARE), SearchProductsResult sin resumir (SEARCH), o
+/// MarketplaceSearchResult (MARKETPLACE_SEARCH — resultado crudo de un
+/// actor de Apify). verdict/confidence/compositeScore quedan null para
+/// COMPARE y MARKETPLACE_SEARCH (no aplican, no es un análisis con score);
+/// para SEARCH se denormaliza el mejor candidato.
 model AgentRun {
   id             String         @id @default(cuid())
   clerkUserId    String

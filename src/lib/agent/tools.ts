@@ -381,8 +381,18 @@ const searchMarketplaceProductsTool: ToolDef<z.infer<typeof searchMarketplacePro
     "Requiere que el servidor tenga APIFY_API_TOKEN y el actor configurado para ese marketplace; si falta " +
     "cualquiera de los dos, lo indica explícitamente en vez de fallar.",
   schema: searchMarketplaceProductsSchema,
-  handler: async (_ctx, input) =>
-    searchMarketplace(input.marketplace, input.query, input.maxItems, input.country),
+  handler: async (ctx, input) => {
+    const result = await searchMarketplace(input.marketplace, input.query, input.maxItems, input.country);
+    await persistAgentRun({
+      clerkUserId: ctx.clerkUserId,
+      source: ctx.source,
+      kind: "MARKETPLACE_SEARCH",
+      query: input.query,
+      market: input.marketplace === "mercadolibre" ? (input.country ?? "AR") : null,
+      payload: result,
+    });
+    return result;
+  },
 };
 
 const scrapeCompetitorPageSchema = z.object({
