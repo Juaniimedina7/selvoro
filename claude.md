@@ -1054,3 +1054,267 @@ archivo, reescrito para esta ronda) en
   BuiltWith (no hay `BUILTWITH_API_KEY` cargada). Los endpoints exactos de
   Tienda Nube (`/products`, `/orders`, `/store`) están armados siguiendo la
   convención documentada pero no se golpearon contra una tienda real.
+
+---
+
+## Estado de implementación — Apify (scraper de búsqueda, Amazon/AliExpress)
+
+Pedido: sumar un scraper vía Apify como fuente de búsqueda nueva, expuesta en
+DB + agente + MCP. El usuario todavía no tiene cuenta de Apify, solo el
+código. Plan completo en `~/.claude/plans/quiero-agregar-a-las-zany-thacker.md`.
+
+### Qué se construyó
+
+- **`UserCredential` reutilizada sin migración**: nuevo `ManualCredentialProvider`
+  `apify` en `src/lib/credentials/providers.ts` (campo único `apiToken`,
+  mismo molde exacto que `meta_ads`), `verify()` pega contra
+  `GET /v2/users/me` de Apify.
+- **`src/lib/collectors/apify.ts`** (nuevo): `searchMarketplace(marketplace,
+  query, apiToken?, maxItems?)` para `"amazon" | "aliexpress"`. BYOK
+  estricto (`getUserCredential`, sin fallback de plataforma — el costo de
+  cada corrida de actor lo paga la cuenta de Apify del usuario, mismo
+  criterio que Meta Ads). Corre el actor vía
+  `POST /v2/acts/{actorId}/run-sync-get-dataset-items`, con el actor ID
+  resuelto por env var (`APIFY_AMAZON_ACTOR_ID` / `APIFY_ALIEXPRESS_ACTOR_ID`)
+  — no hardcodeado, porque Apify Store es un marketplace de terceros sin un
+  actor "oficial" único. Degrada con gracia (nunca lanza) sin token, sin
+  actor configurado, o ante error de red/HTTP, mismo patrón que
+  `meta-ads.ts`/`builtwith.ts`.
+- **Tool nueva `search_marketplace_products`** en `agent/tools.ts` (14ª
+  tool), sin LLM propio — resuelve el credential y llama al collector
+  directo. Se expone automáticamente en chat y MCP (ambos consumen
+  `AGENT_TOOLS`), sin tocar `src/app/api/[transport]/route.ts`.
+- **`list_sources`/`getSourceStatuses`** suma una entrada `apify`, con status
+  `activa` solo si el usuario cargó token Y el servidor tiene al menos un
+  actor ID configurado.
+- Deliberadamente **no integrado al scoring de `analyze_product`** — mismo
+  precedente que Tienda Nube/ML vendedor/BuiltWith: tool de consulta cruda,
+  mejora futura documentada, no automática en esta ronda.
+
+### Limitación real, documentada a propósito
+
+El nombre de los campos de `input` que se le manda al actor (`{ search,
+maxItems }` en el código) es un **placeholder razonable, no verificado** —
+Apify Store no tiene un actor único ni estándar para "buscar en Amazon" o
+"buscar en AliExpress"; cada actor de terceros define su propio schema de
+input. Investigué candidatos reales (sin poder verificarlos sin cuenta):
+Amazon — `good-apis/amazon-search`, `alpha-scraper/amazon-product-search-scraper`;
+AliExpress — `automation-lab/aliexpress-products-scraper`,
+`thirdwatch/aliexpress-product-scraper`. Antes de que esto funcione en
+runtime falta, en orden: crear cuenta en Apify, elegir un actor de cada
+sitio en el Store, leer su README para confirmar el nombre real de los
+campos de input y ajustar el objeto `input` en `apify.ts` (queda comentado
+en el código dónde exactamente), cargar `APIFY_AMAZON_ACTOR_ID` /
+`APIFY_ALIEXPRESS_ACTOR_ID`, y pegar el API token en `/dashboard/settings`.
+
+### Verificado en esta sesión
+
+`tsc --noEmit` y `npm run build` limpios, sin rutas nuevas — la tool se
+agrega al array `AGENT_TOOLS` existente, no crea endpoints.
+**No probado contra la API real de Apify** — no hay cuenta ni token
+disponibles en esta sesión, mismo caso ya documentado para BuiltWith/Meta
+Ads cuando se construyeron sin credenciales reales.
+
+### Addendum — competencia en Mercado Libre/Tienda Nube sin cuenta propia
+
+El usuario preguntó cómo ver competencia en ML/Tienda Nube sin tener cuenta
+en ninguna de las dos. Investigando el código existente encontré una
+restricción real que no estaba en el radar:
+
+- **Mercado Libre YA NO acepta búsquedas anónimas** (`mercadolibre.ts:5-11`,
+  descubierto en una ronda anterior, documentado ahí pero no resaltado
+  acá): `/sites/{site}/search` devuelve 403 sin access token. `analyze_product`
+  ya resuelve esto con `getUserOrPlatformCredential(clerkUserId,
+  "mercadolibre_seller")` — usa el token del usuario si conectó su cuenta, y
+  si no, cae al de `PLATFORM_CREDENTIALS_CLERK_USER_ID`. Conclusión: **hace
+  falta que alguien conecte al menos una cuenta de ML** (no necesita ser
+  vendedor activo, cualquier cuenta personal sirve para sacar el token) —
+  conectando UNA sola vez como fallback de plataforma, funciona para todos
+  los usuarios sin que cada uno necesite la suya. No es opcional como
+  sugería la documentación de fases anteriores.
+- **Tienda Nube no tiene búsqueda pública tipo marketplace** — es federada
+  (cada tienda es su propio dominio), a diferencia de ML/Amazon. El
+  provider OAuth `tienda_nube` sirve solo para conectar LA PROPIA tienda
+  (datos de admin), nunca para ver competidores. Para eso no hace falta
+  ninguna cuenta (ni propia ni de la tienda competidora): alcanza con la
+  URL pública de su tienda.
+
+**Se construyó `src/lib/collectors/webpage.ts` + tool `scrape_competitor_page`**
+(agent/tools.ts, 15ª tool): lee HTML público de cualquier URL (sin cuenta,
+sin BYOK, sin Apify) y extrae `<title>`, meta description, y bloques
+JSON-LD `schema.org/Product` (nombre, precio, moneda, disponibilidad) si la
+página los expone — Tienda Nube y Shopify los emiten para SEO. No ejecuta
+JavaScript: un sitio armado como SPA sin datos estructurados devuelve
+`products: []` con nota explicativa en vez de fallar. Probado en vivo contra
+`https://www.mercadolibre.com.ar/` (`npx tsx` ad-hoc): extrae título/
+descripción correctamente y degrada con gracia al no encontrar JSON-LD
+(esperable, es una SPA). **No probado contra una tienda de Tienda Nube
+real** — no se encontró una URL pública conocida para probar en esta
+sesión; la lógica de parseo de JSON-LD/Product sigue el spec estándar de
+schema.org, no algo específico de Tienda Nube.
+
+---
+
+## Incidente — 500 crudo en prod (`/api/analyze`, `/api/chat`) y su causa real
+
+Reporte del usuario: `selvoro.vercel.app` devolvía el 500 genérico de
+Next.js en producción. Diagnóstico completo, de más superficial a más real:
+
+- **Repo estaba 1 commit atrás** (`.github/workflows/sync-env.yml`, agregado
+  por otra sesión: sincroniza secrets de GitHub → env vars de Vercel,
+  add-only). `gh secret list` mostró que en GitHub solo existía el secret
+  `VERCEL_TOKEN` — el workflow ya había corrido una vez y sincronizó 0 vars.
+  Se subieron los secrets faltantes desde `.env.local` (`gh secret set -f`,
+  sin imprimir valores) y se corrió el workflow — agregó 3 vars que
+  realmente faltaban en Vercel prod (`NEXT_PUBLIC_CLERK_SIGN_IN_URL`,
+  `NEXT_PUBLIC_CLERK_SIGN_UP_URL`, `PLATFORM_CREDENTIALS_CLERK_USER_ID`), el
+  resto ya existía. **Esto NO era la causa del 500** — quedó documentado
+  como hallazgo aparte, no como el fix.
+- **Causa real, encontrada con una ruta de diagnóstico temporal**
+  (`/api/debug-imports`, dynamic `import()` de cada módulo sospechoso
+  dentro de un try/catch, deployada y borrada en el mismo incidente):
+  `@anthropic-ai/sdk@0.122.0` carga eager su helper de webhooks
+  (`client.beta.messages.toolRunner`, que sí usamos en el chat, dispara
+  `resources/beta/beta.js` → `webhooks.js`), que depende de
+  `standardwebhooks@1.1.0` → `@stablelib/base64@^2.0.0`, un paquete ESM
+  puro (`"type": "module"`). El `require()` interno de Next.js en runtime
+  de Vercel no soporta cargar ESM así — `ERR_REQUIRE_ESM`, y explota para
+  CUALQUIER módulo que importe el SDK de Anthropic (`llm/client.ts`,
+  `pipeline.ts`, `report/generate.ts`, `agent/tools.ts`, `agent/chat.ts`),
+  de ahí el 500 en `/api/analyze` y `/api/chat` específicamente (otras
+  rutas — webhooks, settings, cron — no importan el SDK y por eso no
+  fallaban). `serverExternalPackages` en `next.config.ts` (ya estaba
+  configurado para `@anthropic-ai/sdk`) no alcanza: el crash ocurre en el
+  `require()` interno de Next en runtime, no en bundling.
+  **No reproducía localmente** (`npm run build && npm start`): Node 26
+  soporta `require(esm)` nativo, el runtime de Vercel/Next server no.
+- **Fix real**: `standardwebhooks@1.1.1` (ya publicado upstream) bajó su
+  propia dependencia de `@stablelib/base64` a `^1.0.0` (CJS). Se forzó esa
+  versión vía `package.json` → `overrides` (mismo patrón que
+  `@modelcontextprotocol/sdk`). Verificado en prod: `/api/analyze` y
+  `/api/chat` pasaron de 500 crudo a la respuesta JSON esperada (401 sin
+  sesión).
+- Todo el diagnóstico (incluida la lectura de logs vía Vercel API/CLI, que
+  terminó no siendo necesaria) se hizo empujando commits chicos y
+  reversibles a `main` — cada push dispara un redeploy real vía la
+  integración nativa de Vercel (no hay ambiente de staging separado en este
+  proyecto).
+
+## Fix — Mercado Libre: `/sites/{site}/search` bloqueada, migración a `/products/search`
+
+Reporte del usuario tras el fix anterior: ML seguía devolviendo "no
+disponible". Diagnóstico en vivo, contra la API real (no contra docs):
+
+- La cuenta de ML conectada como fallback de plataforma
+  (`PLATFORM_CREDENTIALS_CLERK_USER_ID`) tenía el access token vencido y
+  **sin refresh_token guardado** — se desconectó por código
+  (`prisma.userCredential.deleteMany`, vía script ad-hoc con `.env.local`)
+  y se reconectó desde `/dashboard/settings`.
+- Tras reconectar, **seguía sin refresh_token** (el flujo pide
+  `offline_access` correctamente) — no es lo que rompía la búsqueda, pero
+  queda como limitación conocida sin resolver (posible: la app de ML no
+  tiene el permiso de refresh token habilitado en su panel de partner).
+- **Hallazgo real**: con el token nuevo y válido, `/sites/MLA/search` sigue
+  devolviendo **403 "forbidden"** — confirmado que Mercado Libre bloqueó
+  este endpoint para apps de terceros independientemente de si el token es
+  válido (no es un tema de expiración ni de scope). En cambio,
+  `/products/search` (API de Productos/catálogo) **sí funciona** con el
+  mismo token y devuelve productos reales (nombre, `domain_id`,
+  `paging.total`). Precio: `buy_box_winner` viene `null` en todos los
+  productos probados (varios ids reales) con este nivel de acceso de app —
+  no es recuperable ahí.
+- **`src/lib/collectors/mercadolibre.ts` reescrito** para usar
+  `/products/search`: `totalListings` = `paging.total` (señal de
+  saturación real), `sampleTitles` = nombres de producto de catálogo,
+  `note` menciona la categoría (`domain_id`). `priceMin/Max/Median` quedan
+  explícitamente `null` (antes se completaban desde `/sites/search`) —
+  preferido a inventar un precio que la API no da. `topSellers` queda
+  vacío (esa API no expone vendedor por producto). El engine de scoring ya
+  trataba precio/vendedores `null` con gracia (un sub-signal se saltea),
+  no rompió nada.
+- Google Trends: headers de navegador ya estaban escritos (uncommitted de
+  una sesión anterior) pero sin deployar — se deployaron. Probado en vivo:
+  **Google sigue devolviendo 429 incluso con esos headers**, desde la IP de
+  este sandbox — es rate limiting por IP, no por User-Agent. Riesgo
+  documentado, no resuelto: puede seguir fallando intermitente en prod
+  según la reputación de la IP de Vercel en un momento dado.
+
+## Feature — Alibaba + precio de ML vía Apify, integrado al scoring principal
+
+Pedido explícito: retomar la integración de Apify (que hasta acá solo
+alimentaba tools del agente/MCP, sin cuenta real todavía) y sumar Alibaba,
+usándolo tanto para el agente como para el análisis normal (`/api/analyze`).
+Plan completo en `~/.claude/plans/virtual-doodling-cocke.md`.
+
+### Hallazgo de planeamiento: recuperar precio de ML también necesita Apify
+
+Antes de diseñar, se probó scrapear directo `listado.mercadolibre.com.ar`
+(sin Apify, sin cuenta) — ML devuelve un redirect a una página de
+"verificación de tráfico sospechoso" (anti-bot), igual que ya pasaba con
+Trends y con `/sites/search`. Conclusión: un `fetch` directo no alcanza
+para recuperar precio de ML — necesita la misma cuenta de Apify (proxies)
+que Amazon/AliExpress/Alibaba. Por eso "Mercado Libre" se modeló como un
+CUARTO target de `searchMarketplace`, no como un scraper aparte.
+
+### Qué se construyó
+
+- **`collectors/apify.ts`**: `Marketplace` pasa de `"amazon" | "aliexpress"`
+  a sumar `"alibaba"` y `"mercadolibre"` (este último SOLO para precio, ver
+  abajo — el resto del collector no necesitó cambios, ya era agnóstico al
+  marketplace). Los tipos (`Marketplace`, `MarketplaceSearchItem`,
+  `MarketplaceSearchResult`) se mudaron a `types.ts` (mismo patrón que
+  `MercadoLibreData`/`MetaAdsData`), `apify.ts` los re-exporta.
+- **`types.ts`**: nuevo campo `globalMarketplaces: MarketplaceSearchResult[]`
+  en `AnalysisEvidence` y `Report`.
+- **`pipeline.ts` (`gatherEvidence`)**: suma al `Promise.all` existente una
+  búsqueda en amazon/aliexpress/alibaba (BYOK vía Apify, credential
+  resuelto una vez) → `globalMarketplaces`. Además corre
+  `searchMarketplace("mercadolibre", ...)` y, si trae precio,
+  **backfillea** `priceMin/Max/Median/currency` del `MercadoLibreData`
+  nativo (`mergeMlPrice`) sin tocar `totalListings`/`sampleTitles`/`note`.
+  `globalMarketplaces` NUNCA cuenta contra `dataCoverageNote`/confianza —
+  es BYOK opcional, mismo criterio que BuiltWith/Tienda Nube.
+- **`scoring/engine.ts`**: `Ctx` suma `globalMarketplaces` (default `[]`).
+  `evalMargen` usa el precio más bajo de Alibaba/AliExpress como costo de
+  origen para un margen bruto real cuando hay dato (antes solo comparaba
+  precio local vs ticket, sin costo de base) — aclarado explícitamente como
+  bruto, sin flete/aduana/comisiones. `evalCompetencia` suma el conteo de
+  Amazon como referencia informativa (no pesa más que la señal local).
+  `evalLogistica`/`evalDiferenciacion`/`evalRiesgo` quedan como stubs — no
+  hay forma honesta de convertir estos datos en señal para esas
+  dimensiones.
+- **`report/generate.ts`**: `globalMarketplaces` entra al payload de
+  evidencia del LLM (`marketplacesGlobales`).
+- **`ReportView.tsx`**: sección nueva "Marketplaces globales (referencia)",
+  oculta si no hay datos (caso normal sin cuenta de Apify).
+- **`agent/tools.ts`**: `search_marketplace_products` suma `"alibaba"` y
+  `"mercadolibre"` (precio) al enum de marketplace.
+- **`.env.example`**: `APIFY_ALIBABA_ACTOR_ID`, `APIFY_MERCADOLIBRE_ACTOR_ID`.
+
+### Verificado en esta sesión
+
+`tsc --noEmit` y `npm run build` limpios (sin rutas nuevas). Regresión:
+`computeScore(...)` sin el 5to argumento (`globalMarketplaces`) produce
+exactamente el mismo resultado que pasándole `[]` explícito. `evalMargen`/
+`evalCompetencia` probados con fixtures reales de Alibaba/Amazon (margen
+bruto ~85% con costo US$6 y ticket US$40; nota de Amazon con 3 resultados)
+— ambos degradan igual que antes sin datos. `gatherEvidence` corrido en
+vivo (termo mate, AR, sin cuenta de Apify) da el mismo `composite=43` que
+antes de este cambio, con `globalMarketplaces` degradando con gracia.
+`mergeMlPrice` probado con fixture de items con precio: backfillea
+correctamente sin tocar el resto de `MercadoLibreData`. Deployado a prod,
+verificado `GET /` y `POST /api/analyze` (sin sesión) siguen respondiendo
+como se espera tras el deploy.
+
+### No verificado (documentado como riesgo aceptado)
+
+Sin cuenta de Apify real: el esquema de campos de ningún actor (Amazon,
+AliExpress, Alibaba, Mercado Libre-precio) — sigue siendo el placeholder
+`{ search, maxItems }`. `search_products` (discovery) llama `gatherEvidence`
+por candidato (hasta 8) — con este cambio, cada uno dispara hasta 4
+corridas de actor de Apify (hasta 32 por una sola búsqueda), pagadas por la
+cuenta de Apify del usuario pero con latencia real (cada actor puede tardar
+10-60s). Documentado como riesgo conocido y aceptado, mismo criterio que ya
+se aplicó a Meta Ads/Opus en `search_products` — no se agregó un flag para
+desactivarlo; mitigación futura si hace falta: acotar marketplaces o
+saltar `globalMarketplaces` específicamente en el flujo de `searchProducts`.
