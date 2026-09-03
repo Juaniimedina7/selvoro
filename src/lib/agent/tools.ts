@@ -368,16 +368,12 @@ const searchMarketplaceProductsTool: ToolDef<z.infer<typeof searchMarketplacePro
   title: "Buscar productos en Amazon/AliExpress/Alibaba/Mercado Libre (precio)",
   description:
     "Busca productos reales en Amazon, AliExpress, Alibaba, o precio en Mercado Libre, vía un actor de Apify " +
-    "(scraper), usando el API token que el usuario cargó en Configuración → Integraciones. Datos crudos sin " +
-    "scoring (título, precio, rating, url) — " +
-    "no está integrado al scoring de analyze_product todavía. Requiere que el usuario tenga cuenta de Apify y " +
-    "que el servidor tenga configurado el actor a usar para ese marketplace; si falta cualquiera de los dos, lo " +
-    "indica explícitamente en vez de fallar.",
+    "(scraper) con la cuenta de Apify del servidor. Datos crudos sin scoring propio acá (título, precio, " +
+    "rating, url) — analyze_product ya usa esta misma fuente como evidencia de margen/competencia global. " +
+    "Requiere que el servidor tenga APIFY_API_TOKEN y el actor configurado para ese marketplace; si falta " +
+    "cualquiera de los dos, lo indica explícitamente en vez de fallar.",
   schema: searchMarketplaceProductsSchema,
-  handler: async (ctx, input) => {
-    const cred = await getUserCredential(ctx.clerkUserId, "apify");
-    return searchMarketplace(input.marketplace, input.query, cred?.apiToken, input.maxItems);
-  },
+  handler: async (_ctx, input) => searchMarketplace(input.marketplace, input.query, input.maxItems),
 };
 
 const scrapeCompetitorPageSchema = z.object({

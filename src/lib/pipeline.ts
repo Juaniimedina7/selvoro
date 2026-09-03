@@ -102,13 +102,12 @@ export async function gatherEvidence(
   // credential "de plataforma" (PLATFORM_CREDENTIALS_CLERK_USER_ID) antes de
   // degradar — evita que cada usuario tenga que conectar su propia cuenta
   // solo para tener resultados de Mercado Libre.
-  // Apify (Amazon/AliExpress/Alibaba + precio de ML) es BYOK, igual que Meta
-  // Ads — sin usuario o sin credential cargado, searchMarketplace degrada
-  // con gracia por sí solo (no hace falta chequear acá).
-  const [metaAdsCredential, mlSellerCredential, apifyCredential] = await Promise.all([
+  // Apify (Amazon/AliExpress/Alibaba + precio de ML) es server-side
+  // (APIFY_API_TOKEN), NO es BYOK — searchMarketplace degrada con gracia
+  // por sí solo si falta el token o el actor (no hace falta credential acá).
+  const [metaAdsCredential, mlSellerCredential] = await Promise.all([
     opts?.clerkUserId ? getUserCredential(opts.clerkUserId, "meta_ads") : null,
     getUserOrPlatformCredential(opts?.clerkUserId, "mercadolibre_seller"),
-    opts?.clerkUserId ? getUserCredential(opts.clerkUserId, "apify") : null,
   ]);
 
   // 1. Recolección en paralelo (cada collector degrada con gracia).
@@ -123,10 +122,8 @@ export async function gatherEvidence(
       input.dateFrom,
       input.dateTo,
     ),
-    searchMarketplace("mercadolibre", input.query, apifyCredential?.apiToken),
-    ...GLOBAL_MARKETPLACES.map((marketplace) =>
-      searchMarketplace(marketplace, input.query, apifyCredential?.apiToken),
-    ),
+    searchMarketplace("mercadolibre", input.query),
+    ...GLOBAL_MARKETPLACES.map((marketplace) => searchMarketplace(marketplace, input.query)),
   ]);
 
   const ml = mergeMlPrice((mlResult.raw?.mercadoLibre as MercadoLibreData) ?? EMPTY_ML, mlPriceResult);

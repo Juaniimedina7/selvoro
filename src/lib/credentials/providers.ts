@@ -1,14 +1,14 @@
 import { verifyMetaAdsAccessToken } from "@/lib/collectors/meta-ads";
-import { verifyApifyApiToken } from "@/lib/collectors/apify";
 import { tiendaNubeProvider } from "@/lib/credentials/oauth/tiendaNube";
 import { mercadoLibreSellerProvider } from "@/lib/credentials/oauth/mercadoLibreSeller";
 
 // Registro extensible de integraciones que un usuario puede cargar desde
 // Configuración → Integraciones. NUNCA incluye credenciales de IA
-// (ANTHROPIC_API_KEY sigue siendo del servidor) ni ML_ACCESS_TOKEN (excluido
-// a propósito, sigue compartido — es una integración DISTINTA de
-// mercadolibre_seller). Sumar una integración nueva es agregar una entrada
-// acá, sin tocar el schema de DB (ver UserCredential.provider).
+// (ANTHROPIC_API_KEY sigue siendo del servidor) ni ML_ACCESS_TOKEN/APIFY_API_TOKEN
+// (excluidos a propósito, siguen compartidos server-side — Apify es una
+// cuenta de Selvoro, no BYOK, ver collectors/apify.ts). Sumar una
+// integración nueva es agregar una entrada acá, sin tocar el schema de DB
+// (ver UserCredential.provider).
 //
 // Dos formas de provider:
 // - "manual": el usuario pega un valor (hoy: Meta Ad Library).
@@ -71,26 +71,8 @@ const metaAdsProvider: ManualCredentialProvider = {
   },
 };
 
-const apifyProvider: ManualCredentialProvider = {
-  authType: "manual",
-  id: "apify",
-  label: "Apify (scraper de marketplaces)",
-  description:
-    "Requiere una cuenta en apify.com y su API token (Console → Integrations). Habilita búsqueda de productos " +
-    "en Amazon/AliExpress vía actors de Apify Store. Cada corrida de scraping tiene costo real, se cobra a tu " +
-    "cuenta de Apify, no a Selvoro.",
-  helpUrl: "https://docs.apify.com/api/v2",
-  fields: [{ key: "apiToken", label: "API Token", placeholder: "apify_api_..." }],
-  verify: async (value) => {
-    const token = value.apiToken?.trim();
-    if (!token) return { ok: false, message: "Falta el API token." };
-    return verifyApifyApiToken(token);
-  },
-};
-
 export const CREDENTIAL_PROVIDERS: CredentialProvider[] = [
   metaAdsProvider,
-  apifyProvider,
   tiendaNubeProvider,
   mercadoLibreSellerProvider,
 ];

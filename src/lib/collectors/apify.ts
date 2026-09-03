@@ -1,9 +1,9 @@
 // Búsqueda de productos en marketplaces externos (Amazon, AliExpress,
-// Alibaba, y precio de Mercado Libre) vía Apify. BYOK (mismo criterio que
-// meta-ads.ts): el apiToken es del usuario, cada corrida de actor tiene
-// costo real que paga su cuenta de Apify, no la nuestra. Degrada con gracia
-// sin token o sin actor configurado — nunca lanza, mismo patrón que el
-// resto de los collectors.
+// Alibaba, y precio de Mercado Libre) vía Apify. Server-side (APIFY_API_TOKEN),
+// NO es BYOK: mismo criterio que BUILTWITH_API_KEY/ML_ACCESS_TOKEN — la
+// cuenta de Apify es de Selvoro, el costo de cada corrida de actor lo paga
+// el servidor, no el usuario. Degrada con gracia sin token o sin actor
+// configurado — nunca lanza, mismo patrón que el resto de los collectors.
 //
 // Los Actor IDs se configuran server-side por env var (APIFY_AMAZON_ACTOR_ID
 // / APIFY_ALIEXPRESS_ACTOR_ID / APIFY_ALIBABA_ACTOR_ID /
@@ -44,20 +44,6 @@ function degraded(marketplace: Marketplace, query: string, note: string): Market
   return { available: false, marketplace, query, items: [], note };
 }
 
-/** Valida un API token de Apify con una consulta liviana (GET /users/me). Usado al guardar el credential en /dashboard/settings. */
-export async function verifyApifyApiToken(token: string): Promise<{ ok: boolean; message: string }> {
-  try {
-    const res = await fetch(`${APIFY_API_BASE}/users/me?token=${encodeURIComponent(token)}`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.ok) return { ok: true, message: "Token válido." };
-    if (res.status === 401) return { ok: false, message: "Token de Apify inválido." };
-    return { ok: false, message: `Apify respondió HTTP ${res.status}.` };
-  } catch (e) {
-    return { ok: false, message: `No se pudo contactar la API de Apify (timeout o red): ${String(e)}` };
-  }
-}
-
 // Item de dataset devuelto por el actor: shape desconocido hasta elegir uno
 // real, se normaliza defensivamente probando los nombres de campo más
 // comunes entre scrapers de e-commerce.
@@ -95,22 +81,21 @@ function normalizeItem(raw: RawDatasetItem): MarketplaceSearchItem | null {
 }
 
 /**
- * Busca productos en un marketplace externo vía un actor de Apify. `apiToken`
- * es el credential del usuario (BYOK, ver src/lib/credentials/) — sin token
- * o sin actor configurado en el servidor, degrada con gracia.
+ * Busca productos en un marketplace externo vía un actor de Apify.
+ * APIFY_API_TOKEN es server-side (no BYOK) — sin token o sin actor
+ * configurado en el servidor, degrada con gracia.
  */
 export async function searchMarketplace(
   marketplace: Marketplace,
   query: string,
-  apiToken?: string,
   maxItems = 10,
 ): Promise<MarketplaceSearchResult> {
-  const token = apiToken?.trim();
+  const token = process.env.APIFY_API_TOKEN?.trim();
   if (!token) {
     return degraded(
       marketplace,
       query,
-      "Apify requiere que cargues tu propio API token en Configuración → Integraciones (necesitás una cuenta en apify.com).",
+      "Falta configurar APIFY_API_TOKEN en el servidor (cuenta de Apify de Selvoro).",
     );
   }
 

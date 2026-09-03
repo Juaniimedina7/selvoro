@@ -15,7 +15,6 @@ export interface SourceStatus {
 
 export async function getSourceStatuses(clerkUserId?: string): Promise<SourceStatus[]> {
   const metaCredential = clerkUserId ? await getUserCredential(clerkUserId, "meta_ads") : null;
-  const apifyCredential = clerkUserId ? await getUserCredential(clerkUserId, "apify") : null;
 
   return [
     {
@@ -48,15 +47,18 @@ export async function getSourceStatuses(clerkUserId?: string): Promise<SourceSta
     },
     {
       key: "apify",
-      label: "Apify (Amazon/AliExpress)",
+      label: "Apify (Amazon/AliExpress/Alibaba/Mercado Libre precio)",
       status:
-        apifyCredential?.apiToken && (process.env.APIFY_AMAZON_ACTOR_ID || process.env.APIFY_ALIEXPRESS_ACTOR_ID)
+        process.env.APIFY_API_TOKEN?.trim() &&
+        (process.env.APIFY_AMAZON_ACTOR_ID ||
+          process.env.APIFY_ALIEXPRESS_ACTOR_ID ||
+          process.env.APIFY_ALIBABA_ACTOR_ID ||
+          process.env.APIFY_MERCADOLIBRE_ACTOR_ID)
           ? "activa"
           : "no_disponible",
-      note: apifyCredential?.apiToken
-        ? "Token propio configurado en Configuración → Integraciones. Requiere además que el servidor tenga " +
-          "APIFY_AMAZON_ACTOR_ID / APIFY_ALIEXPRESS_ACTOR_ID configurados."
-        : "Requiere que cargues tu propio API token de Apify en Configuración → Integraciones (necesitás cuenta en apify.com).",
+      note: process.env.APIFY_API_TOKEN?.trim()
+        ? "APIFY_API_TOKEN configurado en el servidor. Requiere además al menos un APIFY_*_ACTOR_ID configurado."
+        : "Requiere APIFY_API_TOKEN configurado en el servidor (cuenta de Apify de Selvoro, no BYOK).",
     },
   ];
 }
