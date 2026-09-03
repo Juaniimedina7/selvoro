@@ -8,11 +8,27 @@
 // Los Actor IDs se configuran server-side por env var (APIFY_AMAZON_ACTOR_ID
 // / APIFY_ALIEXPRESS_ACTOR_ID / APIFY_ALIBABA_ACTOR_ID /
 // APIFY_MERCADOLIBRE_ACTOR_ID) porque Apify Store es un marketplace de
-// terceros sin un actor "oficial" único — el operador elige cuál usar.
-// IMPORTANTE: el payload de `input` de abajo asume campos genéricos
-// (`search`, `maxItems`) que HAY QUE AJUSTAR leyendo el README del actor
-// elegido una vez que exista cuenta — el nombre real del campo de búsqueda
-// varía por actor y no se puede verificar sin una.
+// terceros sin un actor "oficial" único.
+//
+// Verificado EN VIVO (corrida real contra la cuenta de Apify) para 2 de los 4:
+// - amazon -> gio21/amazon-search: input {keyword, domain, maxItems}. Probado
+//   con "termo mate", trajo 3/3 resultados reales con precio/rating/reviews.
+// - mercadolibre -> gio21/mercado-libre-scraper: input {keyword, country,
+//   maxItems (>=10, mínimo del actor), maxPages, sort}. OJO: distinto de
+//   gio21/mercado-livre-scraper (con "v", Brasil/mercadolivre.com.br) — ese
+//   NO sirve para Argentina, es fácil confundirlos por el nombre.
+//   IMPORTANTE (no-determinismo confirmado): el mismo input ("iphone", AR)
+//   devolvió 0 resultados reconocibles en una corrida y 10 en la siguiente,
+//   ambas contra el mismo actor sin cambios — es scraping real, con
+//   protección anti-bot de Mercado Libre que a veces gana. `note` en el
+//   resultado ya cubre este caso ("no devolvió resultados reconocibles"),
+//   pero NO es necesariamente señal de que el producto no existe — el
+//   caller no debería tratar un array vacío acá como "sin competencia".
+// aliexpress/alibaba: NINGÚN actor de búsqueda por keyword disponible entre
+// los revisados (7 actores de gio21) — los únicos actores de Alibaba/1688
+// encontrados son de DETALLE por URL (no keyword search), no encajan con
+// esta arquitectura. Siguen con el payload placeholder ({ search, maxItems })
+// hasta encontrar uno real, y degradan con gracia sin actor configurado.
 //
 // "mercadolibre" acá es un target DISTINTO del collector nativo
 // (collectors/mercadolibre.ts, API oficial de catálogo): sirve solo para
@@ -39,6 +55,14 @@ const ACTOR_ENV_VAR: Record<Marketplace, string> = {
   // fuente de cantidad/nombres/categoría.
   mercadolibre: "APIFY_MERCADOLIBRE_ACTOR_ID",
 };
+
+// Países que gio21/mercado-libre-scraper soporta (17 sitios LatAm
+// hispanohablantes — NO incluye Brasil, que usa un actor distinto). Si
+// input.market cae fuera de esta lista (ej. US, BR, ES), no tiene sentido
+// correr el actor — degrada sin gastar la corrida.
+const ML_SCRAPER_COUNTRIES = new Set([
+  "AR", "MX", "CO", "CL", "PE", "UY", "VE", "EC", "BO", "PY", "PA", "DO", "CR", "GT", "HN", "NI", "SV",
+]);
 
 function degraded(marketplace: Marketplace, query: string, note: string): MarketplaceSearchResult {
   return { available: false, marketplace, query, items: [], note };
@@ -75,20 +99,46 @@ function normalizeItem(raw: RawDatasetItem): MarketplaceSearchItem | null {
     price: pickNumber(raw, ["price", "priceValue", "currentPrice"]),
     currency: pickString(raw, ["currency", "priceCurrency"]),
     rating: pickNumber(raw, ["rating", "stars", "productRating"]),
-    reviewsCount: pickNumber(raw, ["reviewsCount", "reviews", "numberOfReviews"]),
+    // "ratingCount" (gio21/amazon-search) y "reviewCount" (gio21/mercado-libre-scraper)
+    // son los nombres reales confirmados en vivo — se mantienen los genéricos
+    // como fallback para actores todavía no verificados (aliexpress/alibaba).
+    reviewsCount: pickNumber(raw, ["ratingCount", "reviewCount", "reviewsCount", "reviews", "numberOfReviews"]),
     imageUrl: pickString(raw, ["imageUrl", "image", "thumbnail"]),
   };
 }
 
 /**
+ * Arma el payload de `input` para el actor de cada marketplace. Amazon y
+ * Mercado Libre usan el esquema real, confirmado en vivo contra la cuenta de
+ * Apify (ver comentario arriba). AliExpress/Alibaba no tienen actor de
+ * keyword search verificado todavía — placeholder documentado.
+ */
+function buildInput(marketplace: Marketplace, query: string, maxItems: number, country: string): Record<string, unknown> {
+  switch (marketplace) {
+    case "amazon":
+      return { keyword: query, domain: "amazon.com", maxItems };
+    case "mercadolibre":
+      return { keyword: query, country, maxItems };
+    case "aliexpress":
+    case "alibaba":
+      // TODO: sin actor de búsqueda por keyword verificado — ajustar cuando
+      // se elija uno real (ver comentario de cabecera del archivo).
+      return { search: query, maxItems };
+  }
+}
+
+/**
  * Busca productos en un marketplace externo vía un actor de Apify.
  * APIFY_API_TOKEN es server-side (no BYOK) — sin token o sin actor
- * configurado en el servidor, degrada con gracia.
+ * configurado en el servidor, degrada con gracia. `country` (ISO-2, default
+ * "AR") solo aplica a "mercadolibre" — el resto de los marketplaces son
+ * globales y lo ignoran.
  */
 export async function searchMarketplace(
   marketplace: Marketplace,
   query: string,
   maxItems = 10,
+  country = "AR",
 ): Promise<MarketplaceSearchResult> {
   const token = process.env.APIFY_API_TOKEN?.trim();
   if (!token) {
@@ -96,6 +146,14 @@ export async function searchMarketplace(
       marketplace,
       query,
       "Falta configurar APIFY_API_TOKEN en el servidor (cuenta de Apify de Selvoro).",
+    );
+  }
+
+  if (marketplace === "mercadolibre" && !ML_SCRAPER_COUNTRIES.has(country)) {
+    return degraded(
+      marketplace,
+      query,
+      `El actor de Mercado Libre no cubre el mercado ${country} (solo 17 países hispanohablantes de LatAm).`,
     );
   }
 
@@ -108,10 +166,7 @@ export async function searchMarketplace(
     );
   }
 
-  // TODO: ajustar estos nombres de campo al esquema real del actor elegido
-  // (leer su README en Apify Store) una vez que exista cuenta — "search"/
-  // "maxItems" son un placeholder razonable, no una garantía.
-  const input = { search: query, maxItems };
+  const input = buildInput(marketplace, query, maxItems, country);
 
   let res: Response;
   try {

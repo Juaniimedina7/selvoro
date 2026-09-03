@@ -361,6 +361,14 @@ const searchMarketplaceProductsSchema = z.object({
         "de analyze_product no lo expone) — para cantidad/competidores de ML usá analyze_product.",
     ),
   maxItems: z.number().int().positive().max(20).optional().describe("Cantidad de resultados a traer (default 10, máximo 20)."),
+  country: z
+    .string()
+    .length(2)
+    .optional()
+    .describe(
+      "Solo aplica a marketplace=\"mercadolibre\": país ISO-2 (AR, MX, CO, CL, PE, UY, etc — 17 países " +
+        "hispanohablantes de LatAm soportados, no incluye Brasil). Default AR. Ignorado para los demás marketplaces.",
+    ),
 });
 
 const searchMarketplaceProductsTool: ToolDef<z.infer<typeof searchMarketplaceProductsSchema>> = {
@@ -373,7 +381,8 @@ const searchMarketplaceProductsTool: ToolDef<z.infer<typeof searchMarketplacePro
     "Requiere que el servidor tenga APIFY_API_TOKEN y el actor configurado para ese marketplace; si falta " +
     "cualquiera de los dos, lo indica explícitamente en vez de fallar.",
   schema: searchMarketplaceProductsSchema,
-  handler: async (_ctx, input) => searchMarketplace(input.marketplace, input.query, input.maxItems),
+  handler: async (_ctx, input) =>
+    searchMarketplace(input.marketplace, input.query, input.maxItems, input.country),
 };
 
 const scrapeCompetitorPageSchema = z.object({

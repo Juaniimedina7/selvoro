@@ -122,7 +122,7 @@ export async function gatherEvidence(
       input.dateFrom,
       input.dateTo,
     ),
-    searchMarketplace("mercadolibre", input.query),
+    searchMarketplace("mercadolibre", input.query, undefined, input.market),
     ...GLOBAL_MARKETPLACES.map((marketplace) => searchMarketplace(marketplace, input.query)),
   ]);
 
