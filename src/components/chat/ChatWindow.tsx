@@ -1,11 +1,26 @@
 "use client";
 
 import { useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { ToolResultCard } from "./cards/ToolResultCard";
 
+// Shape que persiste la DB / que se reenvía al backend como historial —
+// siempre texto plano, nunca bloques (ver Conversation.messages en Prisma).
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+// Bloques de un mensaje del asistente EN PANTALLA. "text" es prosa del LLM
+// (se renderiza como Markdown); "tool_result" es el dato crudo de una tool
+// call (se renderiza como card de React) — llegan intercalados en el orden
+// real en que el agente los fue produciendo.
+type AssistantBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_result"; tool: string; data: unknown };
+
+type UiMessage = { role: "user"; content: string } | { role: "assistant"; blocks: AssistantBlock[] };
 
 interface ConversationSummary {
   id: string;
@@ -17,8 +32,40 @@ interface ChatWindowProps {
   initialConversations: ConversationSummary[];
 }
 
+// El backend solo persiste/reenvía prosa (Conversation.messages guarda
+// {role, content: string}[]) — las cards son una mejora de la sesión en
+// vivo, no sobreviven a un reload. Acá se aplanan los bloques de texto de
+// vuelta a un string para mandarlos como historial en el próximo POST.
+function toApiMessages(uiMessages: UiMessage[]): ChatMessage[] {
+  return uiMessages.map((m) =>
+    m.role === "user"
+      ? { role: "user", content: m.content }
+      : {
+          role: "assistant",
+          content: m.blocks
+            .filter((b): b is { type: "text"; text: string } => b.type === "text")
+            .map((b) => b.text)
+            .join(""),
+        },
+  );
+}
+
+function applyStreamEvent(blocks: AssistantBlock[], event: { type: string; delta?: string; tool?: string; data?: unknown }): AssistantBlock[] {
+  if (event.type === "text" && typeof event.delta === "string") {
+    const last = blocks[blocks.length - 1];
+    if (last?.type === "text") {
+      return [...blocks.slice(0, -1), { type: "text", text: last.text + event.delta }];
+    }
+    return [...blocks, { type: "text", text: event.delta }];
+  }
+  if (event.type === "tool_result" && typeof event.tool === "string") {
+    return [...blocks, { type: "tool_result", tool: event.tool, data: event.data }];
+  }
+  return blocks;
+}
+
 export function ChatWindow({ initialConversations }: ChatWindowProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>(initialConversations);
   const [input, setInput] = useState("");
@@ -58,7 +105,11 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
         return;
       }
       const data = (await res.json()) as { id: string; messages: ChatMessage[] };
-      setMessages(data.messages);
+      setMessages(
+        data.messages.map((m): UiMessage =>
+          m.role === "user" ? { role: "user", content: m.content } : { role: "assistant", blocks: [{ type: "text", text: m.content }] },
+        ),
+      );
       setConversationId(data.id);
       scrollToBottom();
     } catch {
@@ -71,8 +122,8 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
     const text = input.trim();
     if (!text || loading) return;
 
-    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: text }];
-    setMessages([...nextMessages, { role: "assistant", content: "" }]);
+    const nextMessages: UiMessage[] = [...messages, { role: "user", content: text }];
+    setMessages([...nextMessages, { role: "assistant", blocks: [] }]);
     setInput("");
     setLoading(true);
     setError(null);
@@ -82,7 +133,7 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, conversationId }),
+        body: JSON.stringify({ messages: toApiMessages(nextMessages), conversationId }),
       });
 
       if (!res.ok || !res.body) {
@@ -97,13 +148,28 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let assistantText = "";
+      let buffer = "";
+      let blocks: AssistantBlock[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        assistantText += decoder.decode(value, { stream: true });
-        setMessages([...nextMessages, { role: "assistant", content: assistantText }]);
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? ""; // última línea puede venir incompleta
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const event = JSON.parse(line);
+            blocks = applyStreamEvent(blocks, event);
+          } catch {
+            // línea corrupta/parcial — la ignoramos en vez de romper el chat
+          }
+        }
+
+        setMessages([...nextMessages, { role: "assistant", blocks }]);
         scrollToBottom();
       }
 
@@ -202,25 +268,77 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
               crecimiento&quot;.
             </p>
           )}
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              style={{
-                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                maxWidth: "85%",
-                background: m.role === "user" ? "var(--accent)" : "var(--surface-2)",
-                color: m.role === "user" ? "var(--on-accent)" : "var(--text)",
-                border: m.role === "user" ? "none" : "1px solid var(--border)",
-                borderRadius: 12,
-                padding: "10px 14px",
-                fontSize: 14,
-                lineHeight: 1.55,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {m.content || (loading && i === messages.length - 1 ? "…" : "")}
-            </div>
-          ))}
+          {messages.map((m, i) => {
+            if (m.role === "user") {
+              return (
+                <div
+                  key={i}
+                  style={{
+                    alignSelf: "flex-end",
+                    maxWidth: "85%",
+                    background: "var(--accent)",
+                    color: "var(--on-accent)",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    fontSize: 14,
+                    lineHeight: 1.55,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {m.content}
+                </div>
+              );
+            }
+
+            const isEmpty = m.blocks.length === 0;
+            const isLast = i === messages.length - 1;
+            return (
+              <div
+                key={i}
+                style={{
+                  alignSelf: "flex-start",
+                  maxWidth: "85%",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                {isEmpty && loading && isLast && (
+                  <div
+                    style={{
+                      background: "var(--surface-2)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      color: "var(--muted)",
+                      fontSize: 14,
+                    }}
+                  >
+                    …
+                  </div>
+                )}
+                {m.blocks.map((block, j) =>
+                  block.type === "text" ? (
+                    <div
+                      key={j}
+                      className="chat-markdown"
+                      style={{
+                        background: "var(--surface-2)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: "10px 14px",
+                        color: "var(--text)",
+                      }}
+                    >
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <ToolResultCard key={j} tool={block.tool} data={block.data} />
+                  ),
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {error && (

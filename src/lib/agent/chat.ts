@@ -37,6 +37,15 @@ function getAnthropicClient(): Anthropic {
 export function createChatToolRunner(
   clerkUserId: string,
   messages: Anthropic.Beta.BetaMessageParam[],
+  opts?: {
+    /**
+     * Se dispara con el resultado CRUDO de cada tool call, apenas resuelve
+     * — antes de que el LLM lo reformule en prosa. /api/chat lo usa para
+     * emitir el dato estructurado al browser (cards de React), en paralelo
+     * a la narrativa que el modelo redacta a partir de lo mismo.
+     */
+    onToolResult?: (toolName: string, data: unknown) => void;
+  },
 ) {
   const ctx: ToolContext = { clerkUserId, source: "chat" };
   const tools = AGENT_TOOLS.map((tool) =>
@@ -44,7 +53,11 @@ export function createChatToolRunner(
       name: tool.name,
       description: tool.description,
       inputSchema: tool.schema,
-      run: async (input) => JSON.stringify(await tool.handler(ctx, input)),
+      run: async (input) => {
+        const result = await tool.handler(ctx, input);
+        opts?.onToolResult?.(tool.name, result);
+        return JSON.stringify(result);
+      },
     }),
   );
 

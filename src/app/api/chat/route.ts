@@ -61,23 +61,39 @@ export async function POST(request: Request) {
     }
   }
 
+  const encoder = new TextEncoder();
+  let fullAssistantText = "";
+
+  // Protocolo NDJSON: una línea JSON por evento.
+  // {"type":"text","delta":"..."} — delta de prosa del LLM (como antes, pero
+  //   ahora envuelto para poder intercalarlo con lo de abajo).
+  // {"type":"tool_result","tool":"analyze_product","data":{...}} — resultado
+  //   CRUDO de una tool call (mismo objeto que ya recibe el LLM), para que el
+  //   frontend arme una card de React sin depender de que el modelo lo
+  //   reformule/repita en texto.
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  function emit(event: Record<string, unknown>) {
+    controllerRef?.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+  }
+
   let runner: ReturnType<typeof createChatToolRunner>;
   try {
-    runner = createChatToolRunner(userId, messages as Anthropic.Beta.BetaMessageParam[]);
+    runner = createChatToolRunner(userId, messages as Anthropic.Beta.BetaMessageParam[], {
+      onToolResult: (toolName, data) => emit({ type: "tool_result", tool: toolName, data }),
+    });
   } catch (e) {
     console.error("[/api/chat] createChatToolRunner falló:", e);
     return new Response("No se pudo iniciar el agente. Probá de nuevo en un rato.", { status: 500 });
   }
 
-  const encoder = new TextEncoder();
-  let fullAssistantText = "";
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
+      controllerRef = controller;
       try {
         for await (const stream of runner) {
           stream.on("text", (delta: string) => {
             fullAssistantText += delta;
-            controller.enqueue(encoder.encode(delta));
+            emit({ type: "text", delta });
           });
           const message = await stream.finalMessage();
           if (message.stop_reason === "pause_turn") {
@@ -86,7 +102,7 @@ export async function POST(request: Request) {
         }
       } catch (e) {
         console.error("[/api/chat] error:", e);
-        controller.enqueue(encoder.encode("\n\n[No se pudo completar la respuesta. Probá de nuevo.]"));
+        emit({ type: "text", delta: "\n\n[No se pudo completar la respuesta. Probá de nuevo.]" });
       } finally {
         try {
           await upsertConversationMessages({
@@ -102,7 +118,7 @@ export async function POST(request: Request) {
     },
   });
 
-  const headers: Record<string, string> = { "Content-Type": "text/plain; charset=utf-8" };
+  const headers: Record<string, string> = { "Content-Type": "application/x-ndjson; charset=utf-8" };
   if (resolvedConversationId) headers["X-Conversation-Id"] = resolvedConversationId;
 
   return new Response(readable, { headers });

@@ -54,7 +54,13 @@ interface Ctx {
   globalMarketplaces: MarketplaceSearchResult[];
 }
 
-type DimEval = { value: number; confidence: Confidence; evidence: string };
+type DimEval = {
+  value: number;
+  confidence: Confidence;
+  evidence: string;
+  /** Solo evalMargen la puebla, cuando hay costo de origen + ticketUsd. */
+  marginBreakdown?: ScoreResult["marginBreakdown"];
+};
 
 /** Precio más bajo con dato real entre los items de un marketplace dado (o null si no hay). */
 function cheapestPrice(results: MarketplaceSearchResult[], marketplace: MarketplaceSearchResult["marketplace"]): number | null {
@@ -308,6 +314,7 @@ function evalMargen({ ml, input, globalMarketplaces }: Ctx): DimEval {
   let ev = `Precio mediano local: ${ml.priceMedian} ${ml.currency ?? ""}.`;
   let score = 50;
   let confidence: Confidence = "baja";
+  let marginBreakdown: ScoreResult["marginBreakdown"] = null;
 
   if (costBasis != null && input.ticketUsd) {
     // Con costo de origen y ticket objetivo, sí hay una estimación de margen bruto real
@@ -318,6 +325,14 @@ function evalMargen({ ml, input, globalMarketplaces }: Ctx): DimEval {
     ev += grossMarginPct != null
       ? ` Margen bruto estimado: ~${grossMarginPct}% (US$${grossMarginUsd.toFixed(2)}), SIN flete, aduana ni comisiones — no es rentabilidad neta.`
       : "";
+    if (grossMarginPct != null) {
+      marginBreakdown = {
+        costBasisUsd: costBasis,
+        ticketUsd: input.ticketUsd,
+        grossMarginUsd,
+        grossMarginPct,
+      };
+    }
     if (grossMarginPct != null && grossMarginPct >= 50) score = 75;
     else if (grossMarginPct != null && grossMarginPct >= 25) score = 60;
     else if (grossMarginPct != null && grossMarginPct >= 0) score = 45;
@@ -333,6 +348,7 @@ function evalMargen({ ml, input, globalMarketplaces }: Ctx): DimEval {
     value: score,
     confidence,
     evidence: ev + (confidence === "baja" ? " Estimación, no rentabilidad real." : ""),
+    marginBreakdown,
   };
 }
 
@@ -398,10 +414,12 @@ export function computeScore(
     saturacion_local: `Saturación local (${home})`,
     oportunidad_local: `Oportunidad local (gap US↔${input.market})`,
   };
+  let marginBreakdown: ScoreResult["marginBreakdown"] = null;
   const dimensions: DimensionScore[] = (
     Object.keys(EVALUATORS) as ScoreDimension[]
   ).map((dim) => {
     const evalResult = EVALUATORS[dim](ctx);
+    if (dim === "margen_potencial") marginBreakdown = evalResult.marginBreakdown ?? null;
     return {
       dimension: dim,
       label: labels[dim],
@@ -427,6 +445,7 @@ export function computeScore(
     composite,
     compositeBand: band(composite),
     globalConfidence,
+    marginBreakdown,
   };
 }
 

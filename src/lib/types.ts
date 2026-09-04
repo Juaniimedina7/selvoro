@@ -150,6 +150,19 @@ export interface ScoreResult {
   composite: number;
   compositeBand: "alta" | "media" | "baja";
   globalConfidence: Confidence;
+  /**
+   * Margen bruto estimado cuando hay costo de origen (Alibaba/AliExpress,
+   * vía Apify) y ticketUsd — mismo cálculo que ya arma evalMargen() en
+   * scoring/engine.ts, expuesto acá como dato estructurado en vez de solo
+   * texto en DimensionScore.evidence. null cuando no hay ambos datos.
+   * SIN flete/aduana/comisiones — margen bruto, no rentabilidad neta.
+   */
+  marginBreakdown?: {
+    costBasisUsd: number;
+    ticketUsd: number;
+    grossMarginUsd: number;
+    grossMarginPct: number;
+  } | null;
 }
 
 /** Secciones narrativas generadas por el LLM sobre la evidencia recolectada. */

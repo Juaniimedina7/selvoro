@@ -47,19 +47,22 @@ export interface ToolDef<TInput> {
   handler: (ctx: ToolContext, input: TInput) => Promise<unknown>;
 }
 
-/** Proyección de evidencia cruda para las tools que NO generan narrativa propia. */
+/**
+ * Proyección de evidencia cruda para las tools que NO generan narrativa
+ * propia. Incluye `composite`/`dimensions` completas (value/weight, no solo
+ * band) y `marginBreakdown` — el chat web (src/components/chat) usa este
+ * mismo objeto tal cual para armar la card de React del reporte, además de
+ * lo que el LLM lee para redactar su respuesta.
+ */
 function summarizeEvidence(evidence: AnalysisEvidence) {
   return {
     query: evidence.input.query,
     verdict: evidence.verdict,
     confidence: evidence.confidence,
+    composite: evidence.score.composite,
     compositeBand: evidence.score.compositeBand,
-    dimensions: evidence.score.dimensions.map((d) => ({
-      label: d.label,
-      band: d.band,
-      confidence: d.confidence,
-      evidence: d.evidence,
-    })),
+    dimensions: evidence.score.dimensions,
+    marginBreakdown: evidence.score.marginBreakdown,
     dataCoverageNote: evidence.dataCoverageNote,
     sources: evidence.sources,
   };
