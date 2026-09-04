@@ -1,10 +1,18 @@
 name: Sync env to Vercel
 
 # Sync manual, on-demand, de secrets de GitHub → variables de entorno de Vercel.
-# Solo agrega las que FALTAN en Vercel (no pisa las existentes). No deploya.
-# El deploy lo maneja la integración nativa de Vercel en cada push a main.
+# Por default solo agrega las que FALTAN en Vercel (no pisa las existentes).
+# force_update_keys permite forzar la actualización de keys puntuales que ya
+# existen (ej. rotar una API key inválida) — lista separada por comas. No
+# deploya. El deploy lo maneja la integración nativa de Vercel en cada push
+# a main.
 on:
   workflow_dispatch:
+    inputs:
+      force_update_keys:
+        description: "Keys a forzar actualización aunque ya existan en Vercel (separadas por coma, ej. ANTHROPIC_API_KEY)"
+        required: false
+        default: ""
 
 env:
   # No son secretos: son los IDs del proyecto selvoro en Vercel.
@@ -23,8 +31,9 @@ jobs:
         with:
           node-version: 24
 
-      - name: Sync missing env vars to Vercel
+      - name: Sync env vars to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           SECRETS_JSON: ${{ toJSON(secrets) }}
+          FORCE_UPDATE_KEYS: ${{ inputs.force_update_keys }}
         run: node .github/scripts/sync-env.mjs
