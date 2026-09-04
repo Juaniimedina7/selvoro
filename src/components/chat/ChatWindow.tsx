@@ -19,6 +19,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_products: "Generando y validando ideas de productos…",
   generate_test_brief: "Armando el brief de testeo…",
   meta_ads_snapshot: "Consultando Meta Ads Library…",
+  get_search_trend: "Consultando Google Trends…",
   search_marketplace_products: "Buscando en el marketplace (puede tardar hasta un minuto)…",
   scrape_competitor_page: "Leyendo la página del competidor…",
   tienda_nube_snapshot: "Consultando tu tienda de Tienda Nube…",

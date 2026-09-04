@@ -5,9 +5,10 @@ import { getTiendaNubeSnapshot } from "@/lib/collectors/tiendanube-store";
 import { getMercadoLibreSellerSnapshot } from "@/lib/collectors/mercadolibre-seller";
 import { lookupTechStack } from "@/lib/collectors/builtwith";
 import { collectMetaAds } from "@/lib/collectors/meta-ads";
+import { collectTrends } from "@/lib/collectors/trends";
 import { searchMarketplace } from "@/lib/collectors/apify";
 import { scrapePublicPage } from "@/lib/collectors/webpage";
-import type { MetaAdsData } from "@/lib/types";
+import type { MetaAdsData, TrendsData } from "@/lib/types";
 import { compareMarkets } from "@/lib/report/compareMarkets";
 import { generateTestBrief } from "@/lib/report/generateTestBrief";
 import { searchProducts, DEFAULT_MAX_CANDIDATES, HARD_MAX_CANDIDATES } from "@/lib/discovery/searchProducts";
@@ -65,6 +66,11 @@ function summarizeEvidence(evidence: AnalysisEvidence) {
     marginBreakdown: evidence.score.marginBreakdown,
     dataCoverageNote: evidence.dataCoverageNote,
     sources: evidence.sources,
+    // gatherEvidence ya corre collectTrends por dentro — sumarlo acá es
+    // costo marginal cero (el fetch ya se hizo). No se le suma card propia
+    // en analyze_product por ahora (ver get_search_trend), pero el LLM
+    // puede usarlo para describir la evolución en prosa si quiere.
+    trends: evidence.trends,
   };
 }
 
@@ -416,6 +422,35 @@ const scrapeCompetitorPageTool: ToolDef<z.infer<typeof scrapeCompetitorPageSchem
   handler: async (_ctx, input) => scrapePublicPage(input.url),
 };
 
+const searchTrendSchema = z.object({
+  query: z.string().min(2).describe("Producto o término a graficar."),
+  market: z.enum(COUNTRY_CODES).optional().describe("Mercado local a graficar (default AR). Siempre se compara contra US."),
+  dateFrom: isoDate.optional().describe("Desde (YYYY-MM-DD, opcional). Default: últimos 12 meses."),
+  dateTo: isoDate.optional().describe("Hasta (YYYY-MM-DD, opcional)."),
+});
+
+const searchTrendTool: ToolDef<z.infer<typeof searchTrendSchema>> = {
+  name: "get_search_trend",
+  title: "Graficar evolución de interés de búsqueda (Google Trends)",
+  description:
+    "Devuelve la serie temporal de interés de búsqueda relativo (0-100, Google Trends, fuente NO oficial y frágil) " +
+    "de los últimos meses para el mercado local vs US. Es un proxy de demanda/atención — NUNCA ventas, tráfico ni " +
+    "conversión real. Usar cuando el usuario pida ver cómo evolucionó/creció/cayó el interés por un producto en el " +
+    "tiempo, o pida explícitamente un gráfico/chart de tendencia.",
+  schema: searchTrendSchema,
+  handler: async (_ctx, input) => {
+    const result = await collectTrends(input.query, input.market ?? "AR", input.dateFrom, input.dateTo);
+    return (
+      (result.raw?.trends as TrendsData | undefined) ?? {
+        available: false,
+        ar: { direction: "desconocido", points: [], labels: [] },
+        us: { direction: "desconocido", points: [], labels: [] },
+        note: result.error ?? "Sin datos.",
+      }
+    );
+  },
+};
+
 export const AGENT_TOOLS: ToolDef<unknown>[] = [
   analyzeProduct,
   getReport,
@@ -432,4 +467,5 @@ export const AGENT_TOOLS: ToolDef<unknown>[] = [
   metaAdsSnapshotTool,
   searchMarketplaceProductsTool,
   scrapeCompetitorPageTool,
+  searchTrendTool,
 ] as unknown as ToolDef<unknown>[];

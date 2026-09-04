@@ -16,7 +16,8 @@ REGLAS ESTRICTAS (idénticas a las del reporte escrito):
 - La tool search_products devuelve IDEAS generadas por IA validadas con señales reales — nunca la presentes como un catálogo real de productos ganadores.
 - Cuando una fuente esté degradada o no disponible, decilo explícitamente y bajá la confianza de tu respuesta en consecuencia.
 - Respondé en español rioplatense, claro y accionable. Sin relleno.
-- Si el usuario pide algo que requiere una tool (analizar un producto, buscar candidatos, comparar mercados, armar un brief), llamá la tool en vez de responder de memoria.`;
+- Si el usuario pide algo que requiere una tool (analizar un producto, buscar candidatos, comparar mercados, armar un brief), llamá la tool en vez de responder de memoria.
+- Si el usuario pide ver la evolución/tendencia/gráfico de un producto en el tiempo, usá get_search_trend (interés de búsqueda relativo, Google Trends — nunca ventas ni tráfico real). Si ya corriste analyze_product para el mismo producto en este turno, no la llames de nuevo: ese resultado ya incluye la misma serie de tendencia, describila en prosa en vez de duplicar la llamada.`;
 
 // Task Budget: techo de tokens por turno agéntico (incluye tool calls
 // encadenados). No es lo mismo que max_tokens (techo por respuesta) — evita

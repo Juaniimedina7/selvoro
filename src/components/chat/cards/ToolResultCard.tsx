@@ -1,5 +1,6 @@
 import { AnalysisResultCard } from "./AnalysisResultCard";
 import { MarketplaceSearchResultCard } from "./MarketplaceSearchResultCard";
+import { TrendChartCard } from "./TrendChartCard";
 
 // Dispatcher por nombre de tool. Tools sin card acá simplemente no renderizan
 // nada extra — su resultado ya quedó cubierto por la prosa que el agente
@@ -10,6 +11,8 @@ export function ToolResultCard({ tool, data }: { tool: string; data: unknown }) 
       return <AnalysisResultCard data={data} />;
     case "search_marketplace_products":
       return <MarketplaceSearchResultCard data={data} />;
+    case "get_search_trend":
+      return <TrendChartCard data={data} />;
     default:
       return null;
   }

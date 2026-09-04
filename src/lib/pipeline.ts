@@ -41,8 +41,8 @@ const EMPTY_ML: MercadoLibreData = {
 
 const EMPTY_TRENDS: TrendsData = {
   available: false,
-  ar: { direction: "desconocido", points: [] },
-  us: { direction: "desconocido", points: [] },
+  ar: { direction: "desconocido", points: [], labels: [] },
+  us: { direction: "desconocido", points: [], labels: [] },
   note: "Collector no ejecutado.",
 };
 

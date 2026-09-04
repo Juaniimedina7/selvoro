@@ -97,10 +97,14 @@ export interface MarketplaceSearchResult {
 /** Datos de tendencia (Google Trends): mercado local (ar) vs referencia US (us). */
 export interface TrendsData {
   available: boolean;
-  /** Slot "local": corresponde a `homeCountry` (AR por defecto). */
-  ar: { direction: "subiendo" | "estable" | "bajando" | "desconocido"; points: number[] };
+  /**
+   * Slot "local": corresponde a `homeCountry` (AR por defecto). `points` y
+   * `labels` están alineados por índice (mismo largo) — `labels[i]` es la
+   * fecha/período del punto `points[i]`, para graficar una serie temporal.
+   */
+  ar: { direction: "subiendo" | "estable" | "bajando" | "desconocido"; points: number[]; labels: string[] };
   /** Slot "referencia": siempre US. */
-  us: { direction: "subiendo" | "estable" | "bajando" | "desconocido"; points: number[] };
+  us: { direction: "subiendo" | "estable" | "bajando" | "desconocido"; points: number[]; labels: string[] };
   /** País local real del slot `ar` (default AR). */
   homeCountry?: CountryCode;
   note?: string;

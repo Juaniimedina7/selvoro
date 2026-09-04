@@ -44,11 +44,38 @@ interface ExploreWidget {
   token: string;
 }
 
+interface TimePoint {
+  value: number;
+  label: string;
+}
+
+// Nombres de campo por punto en `timelineData[]`, según el formato público
+// de la API no oficial de Trends (el mismo que replica pytrends):
+// { time: "<epoch en segundos, string>", formattedTime, formattedAxisTime,
+//   value: [n], hasData: [bool] }. NO VERIFICADO en vivo en esta sesión —
+// Google devuelve 429 desde la IP del sandbox de desarrollo (mismo problema
+// ya documentado para este collector). `formattedAxisTime` es el label
+// preferido (ya viene localizado por `hl=es`); si no estuviera, se deriva
+// de `time` (epoch). Si tampoco hay `time`, degrada a un label vacío en vez
+// de romper — el punto igual es válido para el gráfico, solo sin fecha.
+function extractLabel(t: { formattedAxisTime?: string; time?: string }): string {
+  if (typeof t.formattedAxisTime === "string" && t.formattedAxisTime.trim()) {
+    return t.formattedAxisTime.trim();
+  }
+  if (typeof t.time === "string" && t.time.trim()) {
+    const epochSeconds = Number(t.time);
+    if (Number.isFinite(epochSeconds)) {
+      return new Date(epochSeconds * 1000).toLocaleDateString("es-AR", { year: "numeric", month: "short" });
+    }
+  }
+  return "";
+}
+
 async function getInterestOverTime(
   query: string,
   geo: string,
   timeframe = "today 12-m",
-): Promise<number[] | null> {
+): Promise<TimePoint[] | null> {
   const exploreReq = {
     comparisonItem: [{ keyword: query, geo, time: timeframe }],
     category: 0,
@@ -85,12 +112,14 @@ async function getInterestOverTime(
   if (!iotRes.ok) return null;
 
   const iotJson = JSON.parse(stripPrefix(await iotRes.text())) as {
-    default?: { timelineData?: Array<{ value?: number[] }> };
+    default?: {
+      timelineData?: Array<{ value?: number[]; formattedAxisTime?: string; time?: string }>;
+    };
   };
   const timeline = iotJson.default?.timelineData ?? [];
   const points = timeline
-    .map((t) => t.value?.[0])
-    .filter((v): v is number => typeof v === "number");
+    .filter((t) => typeof t.value?.[0] === "number")
+    .map((t) => ({ value: t.value![0], label: extractLabel(t) }));
   return points.length ? points : null;
 }
 
@@ -108,8 +137,8 @@ export async function collectTrends(
   const degraded = (note: string, error?: string): CollectorResult => {
     const data: TrendsData = {
       available: false,
-      ar: { direction: "desconocido", points: [] },
-      us: { direction: "desconocido", points: [] },
+      ar: { direction: "desconocido", points: [], labels: [] },
+      us: { direction: "desconocido", points: [], labels: [] },
       homeCountry: country,
       note,
     };
@@ -138,10 +167,12 @@ export async function collectTrends(
       );
     }
 
+    const arValues = (ar ?? []).map((p) => p.value);
+    const usValues = (us ?? []).map((p) => p.value);
     const data: TrendsData = {
       available: true,
-      ar: { direction: direction(ar ?? []), points: ar ?? [] },
-      us: { direction: direction(us ?? []), points: us ?? [] },
+      ar: { direction: direction(arValues), points: arValues, labels: (ar ?? []).map((p) => p.label) },
+      us: { direction: direction(usValues), points: usValues, labels: (us ?? []).map((p) => p.label) },
       homeCountry: country,
     };
 
