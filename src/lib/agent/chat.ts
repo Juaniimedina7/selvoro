@@ -39,6 +39,14 @@ export function createChatToolRunner(
   messages: Anthropic.Beta.BetaMessageParam[],
   opts?: {
     /**
+     * Se dispara JUSTO ANTES de correr el handler de una tool — algunas
+     * (search_marketplace_products contra Apify, search_products) pueden
+     * tardar bastante. /api/chat lo usa para emitir un evento al browser y
+     * que la UI muestre "corriendo X" en vez de quedarse sin ningún cambio
+     * visible mientras se espera.
+     */
+    onToolStart?: (toolName: string) => void;
+    /**
      * Se dispara con el resultado CRUDO de cada tool call, apenas resuelve
      * — antes de que el LLM lo reformule en prosa. /api/chat lo usa para
      * emitir el dato estructurado al browser (cards de React), en paralelo
@@ -54,6 +62,7 @@ export function createChatToolRunner(
       description: tool.description,
       inputSchema: tool.schema,
       run: async (input) => {
+        opts?.onToolStart?.(tool.name);
         const result = await tool.handler(ctx, input);
         opts?.onToolResult?.(tool.name, result);
         return JSON.stringify(result);

@@ -9,6 +9,32 @@ import { ToolResultCard } from "./cards/ToolResultCard";
 
 const SIDEBAR_LIMIT = 5;
 
+// Texto amigable para el indicador "corriendo tool" — se muestra entre el
+// evento tool_start y el tool_result, que en algunas tools (Apify,
+// search_products) puede tardar bastante y sin esto la UI no muestra nada
+// mientras tanto.
+const TOOL_LABELS: Record<string, string> = {
+  analyze_product: "Analizando el producto…",
+  compare_markets: "Comparando mercados…",
+  search_products: "Generando y validando ideas de productos…",
+  generate_test_brief: "Armando el brief de testeo…",
+  meta_ads_snapshot: "Consultando Meta Ads Library…",
+  search_marketplace_products: "Buscando en el marketplace (puede tardar hasta un minuto)…",
+  scrape_competitor_page: "Leyendo la página del competidor…",
+  tienda_nube_snapshot: "Consultando tu tienda de Tienda Nube…",
+  mercadolibre_seller_snapshot: "Consultando tu cuenta de Mercado Libre…",
+  lookup_tech_stack: "Detectando la tecnología del sitio…",
+  list_reports: "Buscando tus reportes…",
+  get_report: "Abriendo el reporte…",
+  list_sources: "Revisando el estado de las fuentes…",
+  list_analyses: "Buscando tus análisis…",
+  get_analysis: "Abriendo el análisis…",
+};
+
+function toolLabel(tool: string): string {
+  return TOOL_LABELS[tool] ?? `Ejecutando ${tool}…`;
+}
+
 // Shape que persiste la DB / que se reenvía al backend como historial —
 // siempre texto plano, nunca bloques (ver Conversation.messages en Prisma).
 interface ChatMessage {
@@ -76,6 +102,10 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Nombre de la tool corriendo en este momento (entre tool_start y
+  // tool_result), null si no hay ninguna en vuelo — controla el indicador
+  // de espera con label.
+  const [pendingTool, setPendingTool] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Viene de /dashboard/chat/history al hacer click en una conversación
@@ -140,6 +170,7 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
     setInput("");
     setLoading(true);
     setError(null);
+    setPendingTool(null);
     scrollToBottom();
 
     try {
@@ -163,6 +194,7 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
       const decoder = new TextDecoder();
       let buffer = "";
       let blocks: AssistantBlock[] = [];
+      let pending: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -176,14 +208,31 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line);
-            blocks = applyStreamEvent(blocks, event);
+            if (event.type === "tool_start" && typeof event.tool === "string") {
+              pending = event.tool;
+            } else {
+              if (event.type === "tool_result" || event.type === "text") pending = null;
+              blocks = applyStreamEvent(blocks, event);
+            }
           } catch {
             // línea corrupta/parcial — la ignoramos en vez de romper el chat
           }
         }
 
+        setPendingTool(pending);
         setMessages([...nextMessages, { role: "assistant", blocks }]);
         scrollToBottom();
+      }
+
+      // El stream terminó con una tool todavía en vuelo: no es un final
+      // normal (el modelo siempre sigue con texto o el tool_result después
+      // de una tool_start). Suele pasar cuando la función serverless se
+      // corta por timeout duro a mitad de una tool lenta (Apify, etc.) —
+      // sin esto el chat queda "tildado" sin ningún aviso.
+      if (pending) {
+        setError(
+          `La respuesta se cortó mientras corría "${toolLabel(pending)}" — puede pasar con búsquedas que tardan mucho (por ejemplo, Alibaba/AliExpress vía Apify). Probá de nuevo o con una consulta más simple.`,
+        );
       }
 
       if (isNewConversation) await refreshConversations();
@@ -191,6 +240,7 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
       setError("No se pudo conectar con el servidor.");
     } finally {
       setLoading(false);
+      setPendingTool(null);
     }
   }
 
@@ -330,7 +380,25 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
                   gap: 10,
                 }}
               >
-                {isEmpty && loading && isLast && (
+                {loading && isLast && pendingTool && (
+                  <div
+                    style={{
+                      background: "var(--surface-2)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: "10px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      color: "var(--muted)",
+                      fontSize: 13.5,
+                    }}
+                  >
+                    <span className="chat-pulse-dot" />
+                    {toolLabel(pendingTool)}
+                  </div>
+                )}
+                {isEmpty && loading && isLast && !pendingTool && (
                   <div
                     style={{
                       background: "var(--surface-2)",

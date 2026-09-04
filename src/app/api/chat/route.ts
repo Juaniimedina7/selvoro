@@ -67,6 +67,11 @@ export async function POST(request: Request) {
   // Protocolo NDJSON: una línea JSON por evento.
   // {"type":"text","delta":"..."} — delta de prosa del LLM (como antes, pero
   //   ahora envuelto para poder intercalarlo con lo de abajo).
+  // {"type":"tool_start","tool":"analyze_product"} — la tool empezó a
+  //   correr, todavía sin resultado. Algunas (search_marketplace_products
+  //   contra Apify) pueden tardar decenas de segundos — sin este evento el
+  //   frontend no tiene ninguna señal entre el último texto y el resultado,
+  //   y da la sensación de que el chat se colgó.
   // {"type":"tool_result","tool":"analyze_product","data":{...}} — resultado
   //   CRUDO de una tool call (mismo objeto que ya recibe el LLM), para que el
   //   frontend arme una card de React sin depender de que el modelo lo
@@ -79,6 +84,7 @@ export async function POST(request: Request) {
   let runner: ReturnType<typeof createChatToolRunner>;
   try {
     runner = createChatToolRunner(userId, messages as Anthropic.Beta.BetaMessageParam[], {
+      onToolStart: (toolName) => emit({ type: "tool_start", tool: toolName }),
       onToolResult: (toolName, data) => emit({ type: "tool_result", tool: toolName, data }),
     });
   } catch (e) {
