@@ -1,9 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ToolResultCard } from "./cards/ToolResultCard";
+
+const SIDEBAR_LIMIT = 5;
 
 // Shape que persiste la DB / que se reenvía al backend como historial —
 // siempre texto plano, nunca bloques (ver Conversation.messages en Prisma).
@@ -65,6 +69,7 @@ function applyStreamEvent(blocks: AssistantBlock[], event: { type: string; delta
 }
 
 export function ChatWindow({ initialConversations }: ChatWindowProps) {
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>(initialConversations);
@@ -72,6 +77,14 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Viene de /dashboard/chat/history al hacer click en una conversación
+  // vieja que no entra en las últimas 5 del sidebar.
+  useEffect(() => {
+    const openId = searchParams.get("open");
+    if (openId) openConversation(openId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   function scrollToBottom() {
     requestAnimationFrame(() => {
@@ -215,7 +228,7 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
             Sin conversaciones guardadas todavía.
           </p>
         )}
-        {conversations.map((c) => (
+        {conversations.slice(0, SIDEBAR_LIMIT).map((c) => (
           <button
             key={c.id}
             type="button"
@@ -237,6 +250,20 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
             {c.title || "Sin título"}
           </button>
         ))}
+        {conversations.length > SIDEBAR_LIMIT && (
+          <Link
+            href="/dashboard/chat/history"
+            style={{
+              fontSize: 12,
+              color: "var(--accent)",
+              textAlign: "left",
+              padding: "4px 2px",
+              textDecoration: "none",
+            }}
+          >
+            Ver historial completo →
+          </Link>
+        )}
       </div>
 
       <div
@@ -309,12 +336,15 @@ export function ChatWindow({ initialConversations }: ChatWindowProps) {
                       background: "var(--surface-2)",
                       border: "1px solid var(--border)",
                       borderRadius: 12,
-                      padding: "10px 14px",
-                      color: "var(--muted)",
-                      fontSize: 14,
+                      padding: "12px 14px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                      width: 160,
                     }}
                   >
-                    …
+                    <div className="chat-skeleton-bar" style={{ width: "90%" }} />
+                    <div className="chat-skeleton-bar" style={{ width: "60%" }} />
                   </div>
                 )}
                 {m.blocks.map((block, j) =>

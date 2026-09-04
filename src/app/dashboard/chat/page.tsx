@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { auth } from "@clerk/nextjs/server";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { listConversations } from "@/lib/conversations/queries";
@@ -20,13 +21,15 @@ export default async function ChatPage() {
         Analizá productos, comparalos entre AR y US, o pedile ideas — el
         agente usa las mismas fuentes que el formulario de análisis.
       </p>
-      <ChatWindow
-        initialConversations={conversations.map((c) => ({
-          id: c.id,
-          title: c.title,
-          updatedAt: c.updatedAt.toISOString(),
-        }))}
-      />
+      <Suspense fallback={null}>
+        <ChatWindow
+          initialConversations={conversations.map((c) => ({
+            id: c.id,
+            title: c.title,
+            updatedAt: c.updatedAt.toISOString(),
+          }))}
+        />
+      </Suspense>
     </>
   );
 }

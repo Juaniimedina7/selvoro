@@ -355,6 +355,35 @@ a {
   }
 }
 
+/* ---------- chat: skeleton de carga (mientras el agente piensa) ---------- */
+@keyframes chat-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+.chat-skeleton-bar {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--border) 25%,
+    var(--surface) 50%,
+    var(--border) 75%
+  );
+  background-size: 200% 100%;
+  animation: chat-shimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-skeleton-bar {
+    animation: none;
+    background: var(--border);
+  }
+}
+
 /* ---------- prosa del chat (Markdown renderizado) ---------- */
 
 .chat-markdown {
